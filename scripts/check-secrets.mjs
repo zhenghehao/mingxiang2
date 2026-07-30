@@ -43,40 +43,59 @@ console.log(`Agnes 端点 ${agnesBase} · 模型 ${agnesModel}（跟随 default-
 
 // 记账。CI 上必须靠退出码把结论传出去 —— 只在日志里打 ✗ 而进程 exit 0，
 // workflow 会是绿的，等于告诉你「密钥没问题」，那比不体检更糟。
+//
+// 但**判定标准是「够不够用」，不是「是不是全好」**。流水线会轮换 key 并重试，
+// 不需要一池全好：实测那次成功的正式跑，Agnes 只有 2/9 把在 15 秒内响应过。
+// 若一把超时就整体判红，体检就比现实更严格 —— 在真实能跑通的情况下变红，
+// 会训练人忽略它，和「永远变绿」是同一种病的反方向。
+// 所以：一池 0 把可用才算失败；有可用的就放行，但把 N/M 明确打出来。
 const missing = [];
-const failed = [];
-const slow = [];
+const dead = [];      // 整池不可用 → 真正的失败
+const degraded = [];  // 部分不可用 → 只提示
+
+async function probe(url, model, key, timeoutMs) {
+  const started = Date.now();
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_tokens: 4 }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    let msg = ""; try { msg = JSON.parse(await r.text()).error?.message || ""; } catch {}
+    return { ok: r.ok, ms: Date.now() - started, note: `HTTP ${r.status} ${msg.slice(0, 60)}`.trim() };
+  } catch (e) {
+    const ms = Date.now() - started;
+    // 超时要说清等了多久，否则没法判断是该加超时还是这把 key 真的死了。
+    const note = /abort|timeout/i.test(e.message)
+      ? `等了 ${ms}ms 无响应（上限 ${timeoutMs}ms）—— 超时不等于鉴权失败，无效令牌是毫秒级 401`
+      : e.message;
+    return { ok: false, ms, note };
+  }
+}
 
 for (const [name, url, model, timeoutMs] of GROUPS) {
   const keys = split(process.env[name]);
   if (!keys.length) { console.log(`✗ ${name}  没设`); missing.push(name); continue; }
   console.log(`${name}  ${keys.length} 把：${keys.map(mask).join("  ")}   超时上限 ${timeoutMs / 1000}s`);
-  for (const [i, key] of keys.entries()) {
-    const started = Date.now();
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_tokens: 4 }),
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-      const ms = Date.now() - started;
-      let msg = ""; try { msg = JSON.parse(await r.text()).error?.message || ""; } catch {}
-      // 耗时一律打出来。只打 ✓/✗ 的话，「刚好在超时线内答上来」和「秒回」
-      // 看起来一样，而这两者对正式跑的影响差很多。
-      const tag = r.ok && ms >= SLOW_MS ? " 慢" : "";
-      console.log(`   ${r.ok ? "✓" : "✗"} #${i + 1} HTTP ${r.status} ${ms}ms${tag} ${msg.slice(0, 60)}`);
-      if (!r.ok) failed.push(`${name}#${i + 1} HTTP ${r.status}`);
-      else if (ms >= SLOW_MS) slow.push(`${name}#${i + 1} ${ms}ms`);
-    } catch (e) {
-      const ms = Date.now() - started;
-      // 超时要说清「等了多久才放弃」，否则没法判断是该加超时还是这把 key 真的死了。
-      const why = /abort|timeout/i.test(e.message)
-        ? `等了 ${ms}ms 仍无响应（上限 ${timeoutMs}ms）——超时不是鉴权失败，无效令牌是毫秒级返回 401 的`
-        : e.message;
-      console.log(`   ✗ #${i + 1} ${why}`);
-      failed.push(`${name}#${i + 1} 超时/网络（${ms}ms）`);
-    }
+
+  // **池内并发**。流水线自己出图就是 Promise.all 并发的，这里串行毫无道理：
+  // 9 把 key 串行、每把最多等 45 秒，能把体检拖到 6 分钟以上，而体检的价值就在快。
+  // 并发后总耗时≈最慢那一把。
+  const results = await Promise.all(keys.map((k) => probe(url, model, k, timeoutMs)));
+
+  results.forEach((r, i) => {
+    const tag = r.ok && r.ms >= SLOW_MS ? " 慢" : "";
+    console.log(`   ${r.ok ? "✓" : "✗"} #${i + 1} ${r.ms}ms${tag} ${r.note}`);
+  });
+
+  const usable = results.filter((r) => r.ok).length;
+  if (usable === 0) {
+    console.log(`   → 0/${keys.length} 可用，这一池整体不通`);
+    dead.push(`${name}（${keys.length} 把全不通）`);
+  } else {
+    console.log(`   → ${usable}/${keys.length} 可用`);
+    if (usable < keys.length) degraded.push(`${name} ${usable}/${keys.length}`);
   }
 }
 console.log("\n出口 IP（用来判断是不是被按地区拦了）：");
@@ -94,14 +113,18 @@ console.log("\nMINIMAX_SUBSCRIPTION_KEY:", minimaxSet
 
 console.log("\n" + "=".repeat(56));
 if (missing.length) console.log(`没设：${missing.join("、")}`);
-if (failed.length) console.log(`调不通：${failed.join("、")}`);
+if (dead.length) console.log(`整池不通：${dead.join("、")}`);
 if (!minimaxSet) console.log("没设：MINIMAX_SUBSCRIPTION_KEY");
-// 慢不算失败 —— 它只是提前告诉你正式跑会拖多久，别因为慢就把绿勾变红。
-if (slow.length) console.log(`能用但慢（≥${SLOW_MS / 1000}s）：${slow.join("、")}`);
+// 部分不可用不算失败 —— 流水线会轮换 key 并重试，这只是提前告诉你余量还剩多少。
+if (degraded.length) console.log(`部分可用（不影响跑，只是余量变少）：${degraded.join("、")}`);
 
-if (missing.length || failed.length || !minimaxSet) {
+if (missing.length || dead.length || !minimaxSet) {
   console.log("\n体检未通过。上面每一条都会让正式跑在对应的步骤上失败，先修再跑。");
   // 退出码 1 → workflow 变红。绿勾必须真的代表「可以跑了」。
   process.exit(1);
 }
-console.log("\n全部通过，可以跑正式生成。");
+console.log("\n通过，可以跑正式生成。");
+if (degraded.length) {
+  console.log("（有 key 不可用但每池都还有余量。Agnes 那个网关本身就慢，响应时间会跨过超时线，");
+  console.log("  这属于正常抖动 —— 实测只有 2/9 可用时正式跑照样成功出片。）");
+}
