@@ -11,7 +11,11 @@ const GROUPS = [
   ["SENSENOVA_API_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
   ["SENSENOVA_SCORER_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
   ["SENSENOVA_MOTION_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
-  ["AGNES_API_KEYS", "https://api.agnes-ai.cn/v1/chat/completions", "agnes-2.5-flash"]
+  ["AGNES_API_KEYS", "https://api.agnes-ai.cn/v1/chat/completions", "agnes-2.5-flash"],
+  // 备选入口：另一批令牌、另一代模型。CI 上官方直连 401 时，
+  // 用它判断是「这批 key 不行」还是「Agnes 整体不收这个来源」——
+  // 两个端点都 401 就是后者，换端点也没用。
+  ["AGNES_HUB_KEYS", "https://apihub.agnes-ai.cn/v1/chat/completions", "agnes-2.0-flash"]
 ];
 
 const split = (raw) => [...new Set(String(raw || "").split(/[,、，;；\s]+/).map((s) => s.trim()).filter(Boolean))];
@@ -34,5 +38,11 @@ for (const [name, url, model] of GROUPS) {
     } catch (e) { console.log(`   ✗ #${i + 1} ${e.message}`); }
   }
 }
+console.log("\n出口 IP（用来判断是不是被按地区拦了）：");
+try {
+  const r = await fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(15000) });
+  console.log("  ", (await r.json()).ip);
+} catch (e) { console.log("  查不到：", e.message); }
+
 console.log("\nMINIMAX_SUBSCRIPTION_KEY:", process.env.MINIMAX_SUBSCRIPTION_KEY
   ? mask(process.env.MINIMAX_SUBSCRIPTION_KEY) : "没设");

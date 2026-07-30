@@ -99,3 +99,18 @@ test("三段提示词都在，且候选数会被代入", () => {
   assert.notEqual(SKILL_DIRECTOR(6), SKILL_DIRECTOR(9));
   assert.notEqual(SKILL_JUDGE(6), SKILL_JUDGE(9));
 });
+
+test("9 把 key：6 把生图、3 把待命，待命池首轮不参与", () => {
+  const pools = resolveKeyPools(keys(9), [], 3);
+  assert.deepEqual(pools.imageKeys, keys(6));
+  assert.deepEqual(pools.spareKeys, ["k7", "k8", "k9"]);
+  // 待命的意义就在于「没被用过」——和生图池有任何交集都等于白留
+  assert.deepEqual(pools.spareKeys.filter((k) => pools.imageKeys.includes(k)), []);
+});
+
+test("不分池时待命池为空，生图退回在主池里轮换", () => {
+  const pools = resolveKeyPools(keys(4), [], 3);
+  assert.equal(pools.partitioned, false);
+  assert.deepEqual(pools.spareKeys, [], "没分池就不该有待命池，否则会重复使用同一批 key");
+  assert.deepEqual(pools.imageKeys, keys(4));
+});

@@ -81,12 +81,17 @@ export function resolveKeyPools(apiKeys, videoKeys, reservedForVideo) {
   // key 太少时分池反而有害（生图并发被压到 1 甚至 0），所以给生图留至少 2 个才分。
   const partitioned = reserved > 0 && main.length - reserved >= 2;
   const explicitVideo = clean(videoKeys);
+  const spare = partitioned ? main.slice(main.length - reserved) : [];
   return {
     partitioned,
     imageKeys: partitioned ? main.slice(0, main.length - reserved) : main,
-    videoKeys: explicitVideo.length
-      ? explicitVideo
-      : (partitioned ? main.slice(main.length - reserved) : main)
+    videoKeys: explicitVideo.length ? explicitVideo : (partitioned ? spare : main),
+    // 待命池：首轮不参与生图，只在某张图失败后顶上。
+    //
+    // 之前生图失败是在**已经用过的那几把**里轮换（keyIndex+1、+2）——
+    // 如果失败原因是限流，换一把同样刚被用过的没有任何意义。
+    // 留几把从头到尾没碰过的，重试才真的有机会成功。
+    spareKeys: spare
   };
 }
 
@@ -106,13 +111,14 @@ function settings(config = {}) {
   //
   // key 太少时分池反而有害（生图并发被压到 1），所以只在池子够大时才分。
   const pools = resolveKeyPools(apiKeys, merged.videoKeys, merged.reservedForVideo);
-  const { imageKeys, videoKeys, partitioned: canPartition } = pools;
+  const { imageKeys, videoKeys, spareKeys, partitioned: canPartition } = pools;
 
   return {
     ...merged,
     apiKeys,
     imageKeys,
     videoKeys,
+    spareKeys,
     partitioned: canPartition,
     baseUrl: String(merged.baseUrl || DEFAULTS.baseUrl).replace(/\/$/, ""),
     scorerUrl: String(merged.scorerUrl || "").replace(/\/$/, ""),
@@ -318,14 +324,21 @@ async function generatePrompts(agnes, article, count, { signal, note }) {
 }
 
 async function genSingleImage(agnes, prompt, keyIndex, { signal, note }) {
-  const tries = Math.min(3, agnes.imageKeys.length);
+  // 先用分给自己的那把，失败后依次换待命池里的 —— 那几把首轮没人碰过，
+  // 限流窗口是干净的。待命池为空时退回原来的行为（在主池里轮换）。
+  const candidates = [
+    pick(agnes.imageKeys, keyIndex),
+    ...agnes.spareKeys,
+    ...(agnes.spareKeys.length ? [] : [pick(agnes.imageKeys, keyIndex + 1), pick(agnes.imageKeys, keyIndex + 2)])
+  ].filter(Boolean);
+  const tries = candidates.length;
   let lastError = "";
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
       const response = await fetchRetry(`${agnes.baseUrl}/v1/images/generations`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${pick(agnes.imageKeys, keyIndex + attempt)}`,
+          Authorization: `Bearer ${candidates[attempt]}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
