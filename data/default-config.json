@@ -15,18 +15,19 @@
     "copywriter": "sleep-content-publisher-copywriter"
   },
   "textEngine": {
-    "mode": "codex-cli",
+    "mode": "api",
     "codexCli": {
       "path": "auto",
       "model": "gpt-5.6-sol",
       "reasoningEffort": "high",
       "timeoutMs": 900000
-    }
+    },
+    "_mode说明": "api＝调 textProvider 里的接口（CI 和服务器只能用这个）；codex-cli＝调本机 ChatGPT.app 里的 Codex，只在装了它的 Mac 上可用。"
   },
   "textProvider": {
     "type": "openai-compatible-chat",
-    "baseUrl": "https://api.openai.com/v1/chat/completions",
-    "model": "",
+    "baseUrl": "https://api.deepseek.com/chat/completions",
+    "model": "deepseek-v4-pro",
     "stageModels": {
       "topic": "deepseek-v4-flash",
       "script": "",

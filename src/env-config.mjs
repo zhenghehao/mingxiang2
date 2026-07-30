@@ -43,6 +43,11 @@ function getPath(source, dottedPath) {
 
 /** 环境变量名 → 配置里的位置。字符串类。 */
 const STRING_VARS = {
+  // 文本引擎三件套。CI 上没有 data/config.json（它被 gitignore 了），
+  // 全靠 default-config.json + 这里的环境变量，所以这三项必须能被覆盖。
+  TEXT_ENGINE_MODE: "textEngine.mode",
+  TEXT_BASE_URL: "textProvider.baseUrl",
+  TEXT_MODEL: "textProvider.model",
   MEDITATION_OUTPUT_ROOT: "app.outputRoot",
   MEDITATION_BGM_ROOT: "media.bgmRoot",
   MEDITATION_VIDEO_ROOT: "media.videoRoot",

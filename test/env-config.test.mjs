@@ -108,3 +108,35 @@ test("评委和运动导演的变量名是 SENSENOVA 开头 —— 它们本来�
   assert.deepEqual(out.agnesHeadless.scorerKeys, ["sk-s1", "sk-s2"]);
   assert.deepEqual(out.agnesHeadless.motionKeys, ["sk-m1"]);
 });
+
+test("没有 config.json 时，default-config 必须是能直接跑的完整配置", async () => {
+  // CI 上 data/config.json 被 gitignore，不存在。这份默认配置就是全部依据。
+  // 之前它是个骨架（model 空、baseUrl 指向 openai、engine 是 codex-cli），
+  // 结果第一次跑 Actions 在选题那步就报「没有找到 Codex CLI」。
+  const { readFile } = await import("node:fs/promises");
+  const raw = JSON.parse(await readFile(new URL("../data/default-config.json", import.meta.url), "utf8"));
+  const { config } = applyEnvOverrides(raw, {});
+
+  assert.equal(config.textEngine.mode, "api", "CI 上没有 Codex CLI，模式必须是 api");
+  assert.ok(config.textProvider.model, "模型名不能为空");
+  assert.ok(/deepseek/.test(config.textProvider.baseUrl), "地址应指向实际在用的供应商");
+  // Skill 要用名字绑定，id 是绝对路径的哈希，换机器必然对不上
+  for (const [slot, value] of Object.entries(config.slots)) {
+    assert.ok(value && !/^[0-9a-f]{16}$/.test(value), `${slot} 应该用名字绑定而不是 id：${value}`);
+  }
+  // 路径要全是仓库内的相对路径
+  for (const p of [config.app.outputRoot, config.media.bgmRoot, config.media.videoRoot]) {
+    assert.ok(!p.startsWith("/"), `不该是绝对路径：${p}`);
+  }
+});
+
+test("文本引擎三项可以被环境变量覆盖", () => {
+  const out = applyEnvOverrides(base(), {
+    TEXT_ENGINE_MODE: "api",
+    TEXT_BASE_URL: "https://example.test/v1/chat/completions",
+    TEXT_MODEL: "some-model"
+  }).config;
+  assert.equal(out.textEngine.mode, "api");
+  assert.equal(out.textProvider.baseUrl, "https://example.test/v1/chat/completions");
+  assert.equal(out.textProvider.model, "some-model");
+});
