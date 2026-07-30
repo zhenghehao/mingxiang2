@@ -1,0 +1,64 @@
+name: 生成一集冥想
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 日期（留空＝今天，格式 2026-07-30）
+        required: false
+        default: ""
+      brief:
+        description: 时段
+        required: false
+        default: 晚上
+        type: choice
+        options: [晚上, 中午]
+      minutes:
+        description: 成品时长（分钟）
+        required: false
+        default: "10"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 安装依赖
+        run: npm ci --omit=dev || npm install --omit=dev
+      - name: 生成
+        env:
+          TEXT_API_KEY: ${{ secrets.TEXT_API_KEY }}
+          MINIMAX_SUBSCRIPTION_KEY: ${{ secrets.MINIMAX_SUBSCRIPTION_KEY }}
+          SENSENOVA_API_KEYS: ${{ secrets.SENSENOVA_API_KEYS }}
+          AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+          AGNES_SCORER_KEYS: ${{ secrets.AGNES_SCORER_KEYS }}
+          AGNES_MOTION_KEYS: ${{ secrets.AGNES_MOTION_KEYS }}
+          MEDITATION_OUTPUT_ROOT: output
+          MEDITATION_SKILL_ROOTS: skills
+          MEDITATION_BGM_ROOT: assets/bgm
+          MEDITATION_VIDEO_ROOT: assets/video
+          MEDITATION_COVER_DIR: output/_covers
+          AGNES_HEADLESS_ENABLED: "true"
+          AGNES_OUTPUT_DIR: output/_agnes
+        run: |
+          node scripts/run-once.mjs \
+            --date "${{ inputs.date }}" \
+            --brief "${{ inputs.brief }}" \
+            --minutes "${{ inputs.minutes }}"
+      - name: 上传成品
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 冥想成品-${{ github.run_number }}
+          path: |
+            output/**/音频/*.mp3
+            output/**/视频/*.mp4
+            output/**/封面/*.png
+            output/**/文本/*.txt
+            output/**/文本/*.json
+          if-no-files-found: warn
+          retention-days: 90
