@@ -15,6 +15,7 @@
 """
 
 import argparse
+import os
 import sys
 
 try:
@@ -50,6 +51,14 @@ FONT_FAMILIES = {
 
 
 def load_fonts(title_px, subtitle_px, family):
+    """
+    返回 (主标题字体, 副标题字体, 用了哪个文件)。
+
+    第三个返回值是给日志用的。在 CI 上「没报错」不等于「字体对」——
+    ttc 里的 index 是猜的，猜错可能拿到日文或韩文字形的 CJK 变体，
+    中文照样能渲染但字形别扭。把实际用到的文件和 index 打出来，
+    出问题时一眼能看到是哪个，而不是对着一张怪图猜。
+    """
     last = None
     # 指定的字族排在前面，其余作为兜底 —— 换机器时字体可能不全，
     # 宁可换个字体出图，也不要因为缺字体让整张封面失败。
@@ -57,13 +66,14 @@ def load_fonts(title_px, subtitle_px, family):
         item for key, group in FONT_FAMILIES.items() if key != family for item in group
     ]
     for path, bold_idx, light_idx in order:
-        try:
-            return (
-                ImageFont.truetype(path, title_px, index=bold_idx),
-                ImageFont.truetype(path, subtitle_px, index=light_idx),
-            )
-        except Exception as exc:  # 字体缺失或 index 越界，换下一个
-            last = exc
+        for indices in ((bold_idx, light_idx), (0, 0)):
+            try:
+                title = ImageFont.truetype(path, title_px, index=indices[0])
+                sub = ImageFont.truetype(path, subtitle_px, index=indices[1])
+                name = "/".join(filter(None, title.getname()))
+                return title, sub, f"{os.path.basename(path)}[{indices[0]},{indices[1]}] {name}"
+            except Exception as exc:  # 字体缺失或 index 越界，换下一个
+                last = exc
     sys.exit(f"找不到可用的中文字体：{last}")
 
 
@@ -92,7 +102,8 @@ def draw_text_block(image, title, subtitle, opts):
     width, height = image.size
     title_px = max(24, int(height * opts.title_ratio))
     subtitle_px = max(16, int(height * opts.subtitle_ratio))
-    title_font, subtitle_font = load_fonts(title_px, subtitle_px, opts.font)
+    title_font, subtitle_font, font_used = load_fonts(title_px, subtitle_px, opts.font)
+    opts._font_used = font_used
 
     # 左侧压暗，保证浅色字在任何照片上都读得清
     if opts.scrim > 0:
@@ -160,8 +171,9 @@ def main():
     image = Image.open(opts.photo).convert("RGB")
     result = draw_text_block(image, opts.title, opts.subtitle, opts)
     result.save(opts.output, "PNG")
-    print(f"{opts.output}  {result.size[0]}x{result.size[1]}  {opts.font}  "
-          f"主标题 {int(result.size[1] * opts.title_ratio)}px  副标题 {int(result.size[1] * opts.subtitle_ratio)}px")
+    print(f"{opts.output}  {result.size[0]}x{result.size[1]}  "
+          f"主标题 {int(result.size[1] * opts.title_ratio)}px  副标题 {int(result.size[1] * opts.subtitle_ratio)}px  "
+          f"字体 {getattr(opts, '_font_used', opts.font)}")
 
 
 if __name__ == "__main__":
