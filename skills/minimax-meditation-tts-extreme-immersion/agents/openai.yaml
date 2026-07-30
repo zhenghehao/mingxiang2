@@ -1,0 +1,4 @@
+interface:
+  display_name: "MiniMax 极限滞后助眠配音"
+  short_description: "将助眠文稿转换为带高频长留白的 MiniMax 深度沉浸配音文本"
+  default_prompt: "Use $minimax-meditation-tts-extreme-immersion to convert this meditation script into MiniMax-ready Chinese TTS text with extreme immersive pauses."

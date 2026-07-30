@@ -1,0 +1,4 @@
+interface:
+  display_name: "助眠内容发布文案师"
+  short_description: "生成平台原生文案，并安全执行或排查蚁小二发布"
+  default_prompt: "Use $sleep-content-publisher-copywriter to create platform-native copy and safely publish this meditation video to my active Yixiaoer accounts."

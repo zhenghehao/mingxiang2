@@ -1,0 +1,4 @@
+interface:
+  display_name: "MiniMax 冥想 TTS 3.0"
+  short_description: "融合多流派催眠节律、动态张弛与环境音接管的深度沉浸配音优化"
+  default_prompt: "使用 $minimax-meditation-tts-ultimate-v3 将这篇冥想文稿优化为极慢、渐进失重、可直接合成的 MiniMax 纯文本。"

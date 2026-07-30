@@ -45,8 +45,19 @@ test("七平台交接清单使用真实媒体、双封面和各平台独立文�
     videoPath: "/tmp/final.mp4",
     audioPath: "/tmp/final.mp3",
     cover4x3Path: "/tmp/4x3.png",
-    cover16x9Path: "/tmp/16x9.png"
+    cover16x9Path: "/tmp/16x9.png",
+    // 旧清单（这个 fixture 就是）没有这个字段，要落成空串而不是 undefined ——
+    // 界面拿它去拼 URL，undefined 会变成字符串 "undefined" 打到服务端
+    copyTxtPath: ""
   });
+
+  // 新清单里有路径时要如实带出来
+  const withTxt = buildDraftHandoff({
+    runId: "2026-07-26-1234567890",
+    manifest: { ...manifest, assets: { copyTxtPath: "/tmp/文本/04-跨平台发布文案.txt" } },
+    text: { copy: { platforms } }
+  });
+  assert.equal(withTxt.assets.copyTxtPath, "/tmp/文本/04-跨平台发布文案.txt");
   for (const platform of handoff.platforms) {
     assert.doesNotMatch(platform.copy.title, /10分钟/);
     assert.equal(platform.copy.tags[0], "冥想");
