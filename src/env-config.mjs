@@ -48,6 +48,9 @@ const STRING_VARS = {
   TEXT_ENGINE_MODE: "textEngine.mode",
   TEXT_BASE_URL: "textProvider.baseUrl",
   TEXT_MODEL: "textProvider.model",
+  // 音色 ID 不是密钥，但是账号特有的，换账号时要能不改代码就切
+  MINIMAX_VOICE_ID: "minimax.voiceId",
+  MINIMAX_MODEL: "minimax.model",
   MEDITATION_OUTPUT_ROOT: "app.outputRoot",
   MEDITATION_BGM_ROOT: "media.bgmRoot",
   MEDITATION_VIDEO_ROOT: "media.videoRoot",

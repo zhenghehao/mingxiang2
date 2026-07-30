@@ -28,15 +28,23 @@ except ImportError:
 #   0 SC Black / 1 SC Bold / 3 SC Light / 6 SC Regular（2、5、7 是繁体 TC）
 # 主标题取 Bold、副标题取 Regular —— 层次靠字重拉开，不必把主标题撑得过大。
 # 宋体的横细竖粗在深色底上比黑体更容易发虚，所以副标题不用 Light。
+# macOS 在前、Linux 在后。CI 跑在 ubuntu-latest 上，那边没有 Songti，
+# 装 fonts-noto-cjk 后会有 Noto Serif/Sans CJK —— 宋体对应 Serif、黑体对应 Sans。
+# 顺序即优先级，找不到就往下试，一个都没有才报错。
 FONT_FAMILIES = {
     "songti": [
         ("/System/Library/Fonts/Supplemental/Songti.ttc", 1, 6),
         ("/System/Library/Fonts/Supplemental/Songti.ttc", 0, 4),
+        ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc", 2, 2),
+        ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc", 2, 2),
+        ("/usr/share/fonts/truetype/noto/NotoSerifCJK-Bold.ttc", 2, 2),
     ],
     "heiti": [
         ("/System/Library/Fonts/Hiragino Sans GB.ttc", 1, 0),
         ("/System/Library/Fonts/STHeiti Medium.ttc", 0, 0),
         ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0, 0),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 2, 2),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2, 2),
     ],
 }
 
