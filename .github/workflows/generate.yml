@@ -51,7 +51,7 @@ jobs:
           MINIMAX_SUBSCRIPTION_KEY: ${{ secrets.MINIMAX_SUBSCRIPTION_KEY }}
           # 封面出图用的 SenseNova
           SENSENOVA_API_KEYS: ${{ secrets.SENSENOVA_API_KEYS }}
-          # Agnes 主池：提示词 / 生图 / 生视频，发给 api.agnes-ai.cn
+          # Agnes 主池：提示词 / 生图 / 生视频
           AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
           # 评委和运动导演走的也是 SenseNova，但和封面那批是不同的 key
           SENSENOVA_SCORER_KEYS: ${{ secrets.SENSENOVA_SCORER_KEYS }}
@@ -63,6 +63,11 @@ jobs:
           MEDITATION_VIDEO_ROOT: assets/video
           MEDITATION_COVER_DIR: output/_covers
           AGNES_HEADLESS_ENABLED: "true"
+          # 换到 apihub 这一套：key、地址、模型名三样绑定，必须一起换。
+          # 官方直连 api.agnes-ai.cn 在 runner 上一直 401，先试这条路。
+          AGNES_BASE_URL: https://apihub.agnes-ai.cn
+          AGNES_TEXT_MODEL: agnes-2.0-flash
+          AGNES_IMAGE_MODEL: agnes-image-2.0-flash
           AGNES_OUTPUT_DIR: output/_agnes
         run: |
           node scripts/run-once.mjs \
@@ -80,6 +85,7 @@ jobs:
             output/**/音频/*.mp3
             output/**/视频/*.mp4
             output/**/封面/*.png
+            output/_covers/*.png
             output/**/文本/*.txt
             output/**/文本/*.json
           if-no-files-found: warn
