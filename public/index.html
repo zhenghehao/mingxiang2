@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>冥想一键工作流</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-bar">
+      <div class="app-name"><span class="app-mark">冥</span><strong>冥想一键工作流</strong></div>
+      <span class="app-context">选题 → 文稿 → 配音 → 混音 → 视频 → 七平台草稿</span>
+      <div class="top-actions">
+        <button class="button quiet visual-button" id="openVisualStudio"><span class="service-dot" id="agnesTopDot"></span><span>Agnes 视觉</span></button>
+        <button class="button quiet" id="openLibrary">资源库</button>
+        <button class="button quiet" id="openApiSettings">生成设置</button>
+        <button class="button quiet publishing-button" id="openPublishing"><span class="service-dot" id="publishingTopDot"></span><span id="publishingTopText">平台草稿</span></button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="left-rail">
+        <button class="new-task" id="newTask">＋ 新建任务</button>
+        <div class="rail-section task-section">
+          <span class="rail-label">当前任务</span>
+          <button class="task-item selected" id="currentTask">未命名冥想</button>
+        </div>
+        <!-- 生成流程已移到主看板（可展开查看每步产物），这里不再重复列一遍 -->
+        <div class="rail-section rail-hint">
+          <span class="rail-label">今日产出</span>
+          <div class="rail-outputs" id="railOutputs"><small>还没有成品</small></div>
+        </div>
+        <div class="rail-bottom">
+          <span class="service-dot" id="serviceDot"></span>
+          <span id="serviceText">本地服务</span>
+        </div>
+      </aside>
+
+      <main class="main-stage">
+        <div class="board" id="board">
+          <header class="board-head">
+            <div class="board-title">
+              <strong id="boardTitle">未命名冥想</strong>
+              <span id="boardSubtitle">还没有开始生成 · 填好下方信息即可开工</span>
+            </div>
+            <div class="board-progress">
+              <div class="board-progress-bar"><span id="boardProgressBar"></span></div>
+              <strong id="boardProgressText">0%</strong>
+            </div>
+          </header>
+          <!-- 磁盘上中断的运行（服务重启后仍能识别） -->
+          <div class="resumable-runs" id="resumableRuns" hidden></div>
+          <!-- 任务失败时出现：能续跑就给「继续」，不能续跑就说清为什么 -->
+          <div class="resume-bar" id="resumeBar" hidden></div>
+          <!-- 全流程时间线：11 步，每步点开看这一步的实际产物 -->
+          <div class="stage-list" id="stageList"></div>
+        </div>
+        <!-- 旧的实时过程面板保留但隐藏，避免 app.js 里引用它的地方报错 -->
+        <div hidden>
+          <span id="detailEyebrow"></span><strong id="detailTitle"></strong>
+          <span id="detailStatus"></span><span id="detailProgressBar"></span>
+          <p id="detailMessage"></p><div id="processTimeline"></div>
+          <div id="conversation"></div><div id="emptyState"></div>
+          <div id="runView"></div><div id="userMessage"></div>
+          <nav id="workflowNav"></nav>
+          <strong id="railProgressText"></strong><span id="railProgressBar"></span>
+        </div>
+
+        <!-- 输入区一旦交出任务就整块收起来（.composer.collapsed），把纵向空间让给下面的
+             流程图 —— 这一大块只在「还没开始」和「点了新任务」两种时候有用。
+             收起后用下面这条细摘要条替代，点「新任务」才展开回来。 -->
+        <div class="composer">
+          <div class="composer-meta">
+            <input type="date" id="runDate" aria-label="日期">
+            <label class="duration-field" title="不填按 10 分钟生成">
+              <input id="runDuration" type="number" min="3" max="60" step="1"
+                     inputmode="numeric" placeholder="10" aria-label="成品时长（分钟）">
+              <span>分钟</span>
+            </label>
+            <input id="outputName" aria-label="导出名称" placeholder="名称可不填，将自动使用选题标题">
+          </div>
+          <input id="brief" type="hidden" value="晚上">
+          <div class="period-picker" role="radiogroup" aria-label="选择收听时段">
+            <button type="button" class="period-option" data-period="中午" aria-pressed="false">
+              <span class="period-icon">☀</span><span><strong>中午</strong><small>自然完成 · 结束后温柔唤醒</small></span>
+            </button>
+            <button type="button" class="period-option selected" data-period="晚上" aria-pressed="true">
+              <span class="period-icon">☾</span><span><strong>晚上</strong><small>自然完成 · 结尾自然进入睡眠</small></span>
+            </button>
+          </div>
+          <div class="auto-topic-note"><span>自动</span>先检查选题库，排除重复后自动选择最优题目 <strong id="topicHistoryCount">检查中…</strong></div>
+          <div class="composer-actions">
+            <span class="engine-badge" id="activeTextEngine">检测文本引擎…</span>
+            <button class="send-button" id="runWorkflow" aria-label="生成音频与视频" disabled>生成音频与视频</button>
+          </div>
+        </div>
+        <div class="composer-summary" id="composerSummary" hidden>
+          <span id="composerSummaryText"></span>
+          <button type="button" class="button danger" id="cancelJob" hidden>取消</button>
+          <button type="button" class="button quiet" id="composerNewTask">新任务</button>
+        </div>
+      </main>
+
+    </div>
+  </div>
+
+  <!-- Agnes 视觉工作台 —— 弹窗，不再挤在右侧窄栏里。
+       原来它是 .workspace 的第三列（≈520px），Agnes 页面内部的九宫格候选图和
+       循环视频播放器在这个宽度下被裁掉，用户反馈「图片和视频无法观看、视频模块
+       显示不全」。改成 96vw × 94vh 的 <dialog>，iframe 拿到接近整屏的空间。
+       ⚠️ 关键：真正跑图/跑视频的代码在这个 iframe 里（server 只建 bridge job 后轮询），
+       所以关闭弹窗只能让 <dialog> 变成 display:none —— iframe 不会被卸载，
+       里面的 fetch/setTimeout 照常执行，生成不会中断。千万不要在关闭时清 src。 -->
+  <dialog class="modal visual-modal" id="visualModal">
+      <div class="integrated-rail" id="integratedRail">
+        <header class="studio-head">
+          <div class="studio-identity">
+            <span class="agnes-mark">A</span>
+            <span><strong>Agnes AI</strong><small id="agnesStatusText">正在连接视觉服务…</small></span>
+          </div>
+          <div class="studio-head-actions">
+            <button class="icon-button" id="reloadAgnes" title="重新载入视觉面板" aria-label="重新载入视觉面板">↻</button>
+            <button class="icon-button studio-close" id="closeVisualStudio" title="收起视觉面板" aria-label="收起视觉面板">×</button>
+          </div>
+        </header>
+        <nav class="studio-tabs" aria-label="一体化工作区">
+          <button class="active" data-studio-tab="agnes">视觉生成</button>
+          <button data-studio-tab="outputs">成品文件 <span id="outputCount">0</span></button>
+        </nav>
+        <section class="studio-panel active agnes-panel" id="studio-agnes">
+          <div class="agnes-frame-state" id="agnesFrameState">
+            <span class="studio-spinner"></span>
+            <strong>正在载入 Agnes</strong>
+            <small>这里会实时显示封面、候选图与循环视频</small>
+          </div>
+          <iframe id="agnesFrame" title="Agnes AI 视觉工作台" loading="eager"></iframe>
+        </section>
+        <section class="studio-panel output-panel" id="studio-outputs">
+          <div class="output-list" id="outputList">
+            <div class="output-empty">暂无文件</div>
+          </div>
+          <div class="run-note" id="runNote"></div>
+        </section>
+        <footer class="studio-footer">
+          <span>冥想一键工作流 × Agnes</span>
+          <button id="showIntegrationInfo">接口 v1 · 可扩展</button>
+        </footer>
+      </div>
+  </dialog>
+
+  <dialog class="modal" id="libraryModal">
+    <div class="modal-shell">
+      <header class="modal-head">
+        <strong>资源库</strong>
+        <button class="close-button" data-close="libraryModal" aria-label="关闭">关闭</button>
+      </header>
+      <nav class="modal-tabs">
+        <button class="modal-tab active" data-library-tab="skills">技能库</button>
+        <button class="modal-tab" data-library-tab="bgm">背景音乐库</button>
+        <button class="modal-tab" data-library-tab="video">视频库</button>
+      </nav>
+
+      <section class="modal-panel active" id="library-skills">
+        <div class="path-row">
+          <input id="skillRootInput" placeholder="Skill 目录路径">
+          <button class="button primary" id="addSkillRoot">添加</button>
+        </div>
+        <div class="root-list" id="rootList"></div>
+        <div class="slot-grid" id="slotBindings"></div>
+        <div class="section-line"><strong>Markdown 技能</strong><button class="text-button" id="refreshSkills">刷新</button></div>
+        <div class="library-list" id="skillList"></div>
+        <button class="button primary modal-save" id="saveSlots">保存技能绑定</button>
+      </section>
+
+      <section class="modal-panel" id="library-bgm">
+        <div class="path-row media-path-row">
+          <input id="bgmRoot" placeholder="背景音乐文件夹路径">
+          <button class="button quiet" data-choose-media="bgm">选择文件夹</button>
+          <button class="button primary" data-save-media="bgm">保存路径</button>
+        </div>
+        <div class="section-line"><strong>本地音乐</strong><span id="bgmCount">0 个文件</span></div>
+        <div class="library-list" id="bgmList"></div>
+      </section>
+
+      <section class="modal-panel" id="library-video">
+        <div class="path-row media-path-row">
+          <input id="videoRoot" placeholder="视频文件夹路径">
+          <button class="button quiet" data-choose-media="video">选择文件夹</button>
+          <button class="button primary" data-save-media="video">保存路径</button>
+        </div>
+        <div class="section-line"><strong>本地视频</strong><span id="videoCount">0 个文件</span></div>
+        <div class="library-list" id="videoList"></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog class="modal wide-modal" id="apiModal">
+    <div class="modal-shell">
+      <header class="modal-head">
+        <strong>生成设置</strong>
+        <button class="close-button" data-close="apiModal" aria-label="关闭">关闭</button>
+      </header>
+      <nav class="modal-tabs">
+        <button class="modal-tab active" data-api-tab="text">文本引擎</button>
+        <button class="modal-tab" data-api-tab="minimax">MiniMax 声音</button>
+        <button class="modal-tab" data-api-tab="video">视频导出</button>
+      </nav>
+
+      <section class="modal-panel active" id="api-text">
+        <div class="engine-options" role="radiogroup" aria-label="文本引擎">
+          <label class="engine-option">
+            <input type="radio" name="textEngineMode" value="codex-cli">
+            <span><strong>Codex CLI</strong><small>使用当前 ChatGPT 登录，自动读取四个 Skill</small></span>
+          </label>
+          <label class="engine-option">
+            <input type="radio" name="textEngineMode" value="api">
+            <span><strong>自定义 API</strong><small>保留原来的四步兼容接口配置</small></span>
+          </label>
+        </div>
+
+        <div class="engine-panel" id="codexCliPanel">
+          <div class="codex-status-card">
+            <span class="service-dot" id="codexStatusDot"></span>
+            <div><strong id="codexStatusTitle">正在检测 Codex CLI</strong><span id="codexStatusDetail">请稍候…</span></div>
+          </div>
+          <div class="codex-grid">
+            <fieldset class="codex-model-field">
+              <legend>模型（全部可选）</legend>
+              <div class="codex-model-options" id="codexModel" role="radiogroup" aria-label="Codex 模型"></div>
+            </fieldset>
+            <label>思考强度
+              <select id="codexReasoning">
+                <option value="none">无 · 最快</option>
+                <option value="low">低 · 更快</option>
+                <option value="medium">中 · 均衡</option>
+                <option value="high">高级 · 默认</option>
+                <option value="xhigh">超高</option>
+                <option value="max">最大</option>
+              </select>
+            </label>
+            <label class="codex-path-label">CLI 路径
+              <input id="codexPath" placeholder="auto（自动检测）">
+            </label>
+          </div>
+          <div class="button-row">
+            <button class="button quiet" id="detectCodexCli">重新检测</button>
+            <button class="button quiet" id="testCodexCli">测试生成</button>
+            <button class="button primary" id="saveTextEngine">保存为文本引擎</button>
+          </div>
+          <pre class="codex-log" id="codexCliLog">尚未运行测试。</pre>
+        </div>
+
+        <div class="engine-panel" id="apiProviderPanel" hidden>
+          <div class="api-toolbar">
+            <span>四个步骤可以使用相同或不同的兼容接口</span>
+            <button class="text-button" id="copyFirstProvider">复制第一步配置到全部</button>
+          </div>
+          <div class="provider-list" id="providerSettings"></div>
+        </div>
+      </section>
+
+      <section class="modal-panel" id="api-minimax">
+        <div class="voice-delivery-options" role="radiogroup" aria-label="人声生成方式">
+          <label class="voice-delivery-option">
+            <input type="radio" name="minimaxDeliveryMode" value="subscription">
+            <span><strong>订阅 Key · 默认</strong><small>全自动生成，消耗 Token Plan 字符额度</small></span>
+          </label>
+          <label class="voice-delivery-option">
+            <input type="radio" name="minimaxDeliveryMode" value="api">
+            <span><strong>普通 API Key · 备用</strong><small>全自动生成，消耗开放平台账户余额</small></span>
+          </label>
+        </div>
+
+        <div id="minimaxApiControls">
+          <div class="minimax-grid">
+            <label>模型<input id="minimaxModel"></label>
+            <label>voice_id<input id="voiceId"></label>
+            <label>语速<input id="voiceSpeed" type="number" min="0.5" max="2" step="0.05"></label>
+            <label>情绪<input id="voiceEmotion"></label>
+            <label>音量<input id="voiceVolume" type="number" step="0.1"></label>
+            <label>音高<input id="voicePitch" type="number" step="1"></label>
+          </div>
+          <label><span id="minimaxKeyLabel">MiniMax 订阅 Key</span>
+            <div class="secret-row">
+              <input id="minimaxApiKey" type="password" autocomplete="off" placeholder="保存订阅 Key 到 macOS 钥匙串">
+              <button class="button quiet" id="toggleMinimaxKey">显示</button>
+              <button class="button primary" id="saveMinimaxKey">保存</button>
+            </div>
+          </label>
+          <div class="key-line"><span id="minimaxKeyStatus">未检查</span><button class="text-button danger" id="deleteMinimaxKey">删除密钥</button></div>
+          <label>试听文本<textarea id="minimaxTestText" rows="3">晚上好。<#1.2#>这是一段 MiniMax 助眠声音测试。<#1.5#>愿此刻的你，慢慢放松下来。</textarea></label>
+          <audio id="minimaxTestAudio" controls hidden></audio>
+          <details class="debug-panel">
+            <summary>调试信息</summary>
+            <pre id="minimaxDebug">尚未运行测试。</pre>
+          </details>
+          <input id="minimaxApiKeyEnv" type="hidden">
+        </div>
+        <div class="button-row">
+          <button class="button primary" id="saveMinimaxSettings">保存人声生成方式</button>
+          <button class="button quiet" id="testMinimax">测试当前 Key 与试听</button>
+        </div>
+      </section>
+
+      <section class="modal-panel" id="api-video">
+        <div class="video-setting-intro">
+          <strong>选择成品视频的清晰度与体积</strong>
+          <span>助眠画面变化较慢，使用 720P 通常已经足够清晰，也能明显减少上传时间。</span>
+        </div>
+        <div class="video-quality-options" role="radiogroup" aria-label="视频导出质量">
+          <label class="video-quality-option">
+            <input type="radio" name="videoQuality" value="balanced">
+            <span><strong>平衡体积 · 推荐</strong><small>720×1280 · 24 帧 · 适合日常发布</small><em>预计比原高清设置小很多</em></span>
+          </label>
+          <label class="video-quality-option">
+            <input type="radio" name="videoQuality" value="compact">
+            <span><strong>更小体积</strong><small>720×1280 · 24 帧 · 压缩更强</small><em>适合长视频或上传受限时</em></span>
+          </label>
+          <label class="video-quality-option">
+            <input type="radio" name="videoQuality" value="high">
+            <span><strong>高清优先</strong><small>1080×1920 · 30 帧 · 画质更细</small><em>文件较大，导出也更慢</em></span>
+          </label>
+        </div>
+        <button class="button primary" id="saveVideoSettings">保存视频设置</button>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog class="modal publishing-modal draft-modal" id="publishingModal">
+    <div class="modal-shell">
+      <header class="modal-head">
+        <div><strong>本次成品</strong><small id="draftRunLabel">选择本次工作流产物后检查</small></div>
+        <button class="close-button" data-close="publishingModal" aria-label="关闭">关闭</button>
+      </header>
+      <section class="publishing-panel draft-publishing-panel">
+        <div class="publishing-only" hidden><div class="connection-status-card">
+          <span class="service-dot" id="draftServiceDot"></span>
+          <div><strong id="draftServiceTitle">正在检查内嵌草稿服务</strong><span id="draftServiceDetail">不会自动正式发布</span></div>
+          <button class="button quiet" id="refreshDraftStatus">重新检测</button>
+        </div>
+
+        <div class="draft-safety-note">
+          <strong>执行边界</strong>
+          <span>五个视频平台只保存草稿；喜马拉雅和网易云播客只上传并填写表单，停在最终人工确认前。</span>
+        </div></div>
+
+        <div class="draft-assets" id="draftAssets" hidden>
+          <div class="draft-media-card">
+            <strong>最终视频</strong>
+            <video id="draftVideoPreview" controls preload="metadata"></video>
+          </div>
+          <div class="draft-media-card">
+            <strong>最终音频</strong>
+            <audio id="draftAudioPreview" controls preload="metadata"></audio>
+          </div>
+          <div class="draft-cover-card"><strong>4:3 封面</strong><img id="draftCover4x3" alt="4:3 封面预览"></div>
+          <div class="draft-cover-card"><strong>16:9 封面</strong><img id="draftCover16x9" alt="16:9 封面预览"></div>
+          <div class="draft-media-card draft-copy-card">
+            <strong>七平台发布文案 <span class="copy-badge" id="draftCopyBadge"></span></strong>
+            <pre id="draftCopyPreview">读取中…</pre>
+            <a class="button quiet" id="draftCopyOpen" href="#" target="_blank" rel="noreferrer">查看完整 txt</a>
+          </div>
+        </div>
+
+        <div class="draft-download-bar" id="draftDownloadBar" hidden>
+          <div>
+            <strong>打包下载</strong>
+            <span>音频、视频、两张封面、七平台文案 txt，压成一个以日期和标题命名的文件夹。</span>
+          </div>
+          <a class="button primary" id="downloadBundle" href="#">一键下载全部</a>
+        </div>
+
+        <!-- 发布相关整块收在这里。默认不显示 —— 视频生成会搬到 GitHub 上跑，
+             那边用不到发布；本地要接发布时把 publishing.uiEnabled 改成 true。
+             代码保留不删：这套七平台草稿逻辑还要用，删了以后找回来更麻烦。 -->
+        <div id="publishingSection" hidden>
+        <div class="account-toolbar">
+          <div><strong>平台、文案与账号</strong><span id="draftPlatformCount">等待读取产物</span></div>
+          <label class="draft-select-all"><input id="draftSelectAll" type="checkbox" checked> 全选</label>
+        </div>
+        <div class="draft-platform-list" id="draftPlatformList">
+          <div class="output-empty">工作流完成后会在这里显示七个平台。</div>
+        </div>
+
+        <section class="draft-job-panel" id="draftJobPanel" hidden>
+          <div class="draft-job-head"><strong>处理进度</strong><span id="draftJobState">等待开始</span></div>
+          <div class="platform-table" id="draftJobResults"></div>
+        </section>
+
+        <section class="draft-login-panel" id="draftLoginPanel" hidden>
+          <strong id="draftLoginTitle">重新登录</strong>
+          <span id="draftLoginHint"></span>
+          <img id="draftLoginQr" alt="登录二维码" hidden>
+          <div class="draft-login-actions">
+            <button class="button quiet" id="refreshAfterLogin">重新检测登录状态</button>
+            <button class="button quiet" id="closeDraftLogin">收起</button>
+          </div>
+        </section>
+
+        <div class="draft-action-bar">
+          <div>
+            <strong id="draftActionTitle">请先完成一次工作流</strong>
+            <span id="draftActionHint">此按钮不会点击任何平台的正式发布按钮。</span>
+          </div>
+          <button class="button primary" id="savePlatformDrafts" disabled>存入草稿箱 / 准备人工确认</button>
+        </div>
+        </div><!-- /publishingSection -->
+
+        <details class="debug-panel publishing-debug">
+          <summary>服务与登录详情</summary>
+          <pre id="draftDebug">尚未检测。</pre>
+        </details>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog class="modal result-modal" id="resultModal">
+    <div class="modal-shell">
+      <header class="modal-head">
+        <strong id="resultTitle">结果</strong>
+        <button class="close-button" data-close="resultModal" aria-label="关闭">关闭</button>
+      </header>
+      <div class="result-columns">
+        <section><div class="result-label">本次输出</div><textarea id="apiResultText" readonly></textarea></section>
+        <section><div class="result-label">历史样本</div><textarea id="codexResultText" readonly></textarea></section>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

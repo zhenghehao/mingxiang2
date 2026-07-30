@@ -1,0 +1,30 @@
+2026-07-26 18:18:00.487 | INFO     | uploader.xiaohongshu_uploader.main:upload:602 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 18:18:19.182 | SUCCESS  | uploader.xiaohongshu_uploader.main:cookie_auth:191 - 🥳 cookie 有效
+2026-07-26 18:18:19.759 | INFO     | uploader.xiaohongshu_uploader.main:upload:604 - 🥳 上传前检查通过
+2026-07-26 18:18:25.229 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:542 - 🏃 小人开始搬运视频: 蚕房沙沙声里的雪丝被，温柔裹住你.mp4
+2026-07-26 18:18:25.230 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:543 - 🧭 小人正在赶往视频发布页
+2026-07-26 18:18:40.984 | SUCCESS  | uploader.xiaohongshu_uploader.main:upload_video_content:582 - 🥳 虽然没看到预览区，但标题框出来了，小人继续
+2026-07-26 18:18:40.984 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:589 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 18:18:51.187 | INFO     | uploader.xiaohongshu_uploader.main:set_thumbnail:516 - 🖼️ 小人准备设置封面
+2026-07-26 18:18:58.454 | SUCCESS  | uploader.xiaohongshu_uploader.main:set_thumbnail:539 - 🥳 封面已经设置完成
+2026-07-26 18:18:59.566 | SUCCESS  | uploader.xiaohongshu_uploader.main:check_original_declaration:464 - ✅ 原创声明已勾选
+2026-07-26 18:22:42.177 | INFO     | uploader.xiaohongshu_uploader.main:upload:602 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 18:22:51.588 | SUCCESS  | uploader.xiaohongshu_uploader.main:cookie_auth:191 - 🥳 cookie 有效
+2026-07-26 18:22:51.919 | INFO     | uploader.xiaohongshu_uploader.main:upload:604 - 🥳 上传前检查通过
+2026-07-26 18:22:54.639 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:542 - 🏃 小人开始搬运视频: 蚕房沙沙声里的雪丝被，温柔裹住你.mp4
+2026-07-26 18:22:54.639 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:543 - 🧭 小人正在赶往视频发布页
+2026-07-26 18:23:05.666 | SUCCESS  | uploader.xiaohongshu_uploader.main:upload_video_content:582 - 🥳 虽然没看到预览区，但标题框出来了，小人继续
+2026-07-26 18:23:05.666 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:589 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 18:23:17.024 | INFO     | uploader.xiaohongshu_uploader.main:set_thumbnail:516 - 🖼️ 小人准备设置封面
+2026-07-26 18:23:23.129 | SUCCESS  | uploader.xiaohongshu_uploader.main:set_thumbnail:539 - 🥳 封面已经设置完成
+2026-07-26 18:23:24.141 | SUCCESS  | uploader.xiaohongshu_uploader.main:check_original_declaration:464 - ✅ 原创声明已勾选
+2026-07-26 21:25:02.769 | INFO     | uploader.xiaohongshu_uploader.main:upload:602 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 21:25:11.451 | SUCCESS  | uploader.xiaohongshu_uploader.main:cookie_auth:191 - 🥳 cookie 有效
+2026-07-26 21:25:11.866 | INFO     | uploader.xiaohongshu_uploader.main:upload:604 - 🥳 上传前检查通过
+2026-07-26 21:25:14.187 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:542 - 🏃 小人开始搬运视频: 松窗残局，今晚就放下吧.mp4
+2026-07-26 21:25:14.188 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:543 - 🧭 小人正在赶往视频发布页
+2026-07-26 21:25:22.452 | SUCCESS  | uploader.xiaohongshu_uploader.main:upload_video_content:582 - 🥳 虽然没看到预览区，但标题框出来了，小人继续
+2026-07-26 21:25:22.452 | INFO     | uploader.xiaohongshu_uploader.main:upload_video_content:589 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 21:25:35.789 | INFO     | uploader.xiaohongshu_uploader.main:set_thumbnail:516 - 🖼️ 小人准备设置封面
+2026-07-26 21:25:42.820 | SUCCESS  | uploader.xiaohongshu_uploader.main:set_thumbnail:539 - 🥳 封面已经设置完成
+2026-07-26 21:25:43.654 | SUCCESS  | uploader.xiaohongshu_uploader.main:check_original_declaration:464 - ✅ 原创声明已勾选

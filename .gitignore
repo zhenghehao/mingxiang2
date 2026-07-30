@@ -1,0 +1,26 @@
+node_modules/
+data/config.json
+data/asset-history.json
+# 真实密钥只放这里，.env.example 才是提交进仓库的模板
+.env
+.env.*
+!.env.example
+work/runs/
+outputs/*
+!outputs/.gitkeep
+.DS_Store
+.playwright-cli/
+迁移包-*/
+迁移包-*.zip
+迁移包-*.sha256
+
+# 内嵌 Python 运行时：4900+ 个文件，是 uv 装出来的，克隆后重装即可
+extensions/draft-publisher/runtime/
+extensions/draft-publisher/**/.venv*/
+extensions/draft-publisher/**/__pycache__/
+extensions/draft-publisher/**/.uv-cache/
+# 平台登录 cookie —— 绝对不能进仓库
+extensions/draft-publisher/app/cookiesFile/
+extensions/draft-publisher/app/.publisher_data/
+# 跑过的任务记录，只对当时那台机器有意义
+work/draft-jobs/

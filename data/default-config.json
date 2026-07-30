@@ -1,0 +1,118 @@
+{
+  "app": {
+    "name": "眠屿工作台",
+    "port": 4318,
+    "outputRoot": "outputs",
+    "runRoot": "work/runs"
+  },
+  "skillRoots": [],
+  "slots": {
+    "topic": null,
+    "script": null,
+    "ttsOptimizer": null,
+    "copywriter": null
+  },
+  "textEngine": {
+    "mode": "codex-cli",
+    "codexCli": {
+      "path": "auto",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "timeoutMs": 900000
+    }
+  },
+  "textProvider": {
+    "type": "openai-compatible-chat",
+    "baseUrl": "https://api.openai.com/v1/chat/completions",
+    "model": "",
+    "stageModels": {
+      "topic": "deepseek-v4-flash",
+      "script": "",
+      "tts": "",
+      "copy": "deepseek-v4-flash"
+    },
+    "_stageModels说明": "四步各用什么模型。留空＝用上面的 model。原稿(script)和配音文本(tts)是创作，用 pro；选题(topic)和发布文案(copy)用 flash 省钱。注意：实测 flash 在 copy 这步偶尔会让两个平台标题重复，且不报错。",
+    "apiKeyEnv": "TEXT_API_KEY",
+    "temperature": 0.7
+  },
+  "minimax": {
+    "deliveryMode": "subscription",
+    "baseUrl": "https://api.minimaxi.com/v1/t2a_v2",
+    "apiKeyEnv": "MINIMAX_API_KEY",
+    "subscriptionApiKeyEnv": "MINIMAX_SUBSCRIPTION_KEY",
+    "model": "speech-2.8-hd",
+    "voiceId": "",
+    "speed": 0.72,
+    "volume": 1,
+    "pitch": 0,
+    "emotion": "happy",
+    "sampleRate": 32000,
+    "bitrate": 128000,
+    "format": "mp3",
+    "channel": 1
+  },
+  "media": {
+    "bgmRoot": "",
+    "videoRoot": "",
+    "ffmpegPath": "bundled",
+    "ffprobePath": "bundled",
+    "introSeconds": 10,
+    "bgmGainDb": -35,
+    "fadeSeconds": 25,
+    "videoQuality": "balanced",
+    "width": 1080,
+    "height": 1920
+  },
+  "agnes": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:8899",
+    "projectRoot": "",
+    "timeoutMs": 3600000,
+    "fallbackToLibrary": false,
+    "endFadeSeconds": 5,
+    "embedded": true
+  },
+  "agnesHeadless": {
+    "enabled": false,
+    "_说明": "开启后视觉这一步不再依赖 agnes-playground 页面，直接在服务里调 API 跑完六步。关掉就退回浏览器版。",
+    "baseUrl": "https://apihub.agnes-ai.cn",
+    "_baseUrl说明": "2026-07-29 服务从 .com 迁到 .cn，旧域名已失效。文档上的 api.agnes-ai.cn 是官方直连 API，与 apihub 聚合网关不是一套令牌，别混用。",
+    "apiKeys": [],
+    "_apiKeys说明": "主池：提示词 / 生图 / 生视频。至少 1 个。",
+    "videoKeys": [],
+    "_videoKeys说明": "留空则从 apiKeys 尾部按 reservedForVideo 切出来；填了就完全按这里的。",
+    "reservedForVideo": 3,
+    "_reservedForVideo说明": "从 apiKeys 尾部留给生视频的个数，生图永远不碰这几个 —— 避免生图把限流窗口烧光后生视频拿不到配额。剩给生图的不足 2 个时自动不分池。",
+    "candidateCount": 6,
+    "_candidateCount说明": "候选图张数。评委要把全部候选打包进同一个请求，张数越多越容易撑爆，6 是稳定性和选优空间的折中。",
+    "textModel": "agnes-2.0-flash",
+    "imgModel": "agnes-image-2.0-flash",
+    "vidModel": "agnes-video-v2.0",
+    "_模型说明": "实测这个网关上只有 2.0 一代可用：image-2.1-flash 会网关 520（慢到把 Cloudflare 拖超时），image-2.5-flash 和 video-v2.5 都是 503 model_not_found（账号下没开通道）。等开通了再往上调。",
+    "loopMode": "loop",
+    "scorerUrl": "https://token.sensenova.cn/v1",
+    "scorerModel": "sensenova-6.7-flash-lite",
+    "scorerKeys": [],
+    "motionUrl": "https://token.sensenova.cn/v1",
+    "motionModel": "sensenova-6.7-flash-lite",
+    "motionKeys": [],
+    "coverPath": "",
+    "_coverPath说明": "叠在片头做淡出的半透明封面图，留空则封面版等同纯净版。",
+    "outputDir": "",
+    "_outputDir说明": "两段成品的落地目录，留空则用 agnes.projectRoot/output。",
+    "videoPollMax": 90,
+    "videoPollIntervalMs": 3000
+  },
+  "publishing": {
+    "uiEnabled": false,
+    "_uiEnabled说明": "界面上显不显示七平台发布那一块。默认关：视频生成搬到 GitHub 上跑时用不到发布，那块占地方还容易误点。本地要接发布时改成 true，代码一直都在。",
+    "provider": "yixiaoer",
+    "handoffMode": "cli",
+    "openUrl": "https://www.yixiaoer.cn/",
+    "cli": {
+      "path": "auto",
+      "publishChannel": "cloud",
+      "timeoutMs": 120000
+    }
+  }
+}

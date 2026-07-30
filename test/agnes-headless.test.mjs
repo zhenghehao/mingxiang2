@@ -1,0 +1,101 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  agnesHeadlessEnabled,
+  extractJSON,
+  resolveKeyPools
+} from "../src/agnes-headless.mjs";
+import { SKILL_DIRECTOR, SKILL_JUDGE, SKILL_MOTION } from "../src/agnes-prompts.mjs";
+
+const keys = (n) => Array.from({ length: n }, (_, i) => `k${i + 1}`);
+
+test("key 够多时按尾部切出视频专用池，两池不重叠", () => {
+  const pools = resolveKeyPools(keys(15), [], 3);
+  assert.equal(pools.partitioned, true);
+  assert.deepEqual(pools.imageKeys, keys(12));
+  assert.deepEqual(pools.videoKeys, ["k13", "k14", "k15"]);
+  // 不重叠才是这套分池的意义所在：生图烧掉的限流窗口不能牵连生视频
+  const overlap = pools.imageKeys.filter((k) => pools.videoKeys.includes(k));
+  assert.deepEqual(overlap, []);
+});
+
+test("key 太少时不分池，否则生图并发会被压到 1", () => {
+  // 4 个 key 留 3 个给视频，生图只剩 1 个 —— 这种情况必须退回共用
+  const pools = resolveKeyPools(keys(4), [], 3);
+  assert.equal(pools.partitioned, false);
+  assert.deepEqual(pools.imageKeys, keys(4));
+  assert.deepEqual(pools.videoKeys, keys(4));
+});
+
+test("刚好够分的边界：生图至少要留 2 个", () => {
+  assert.equal(resolveKeyPools(keys(5), [], 3).partitioned, true);
+  assert.deepEqual(resolveKeyPools(keys(5), [], 3).imageKeys, ["k1", "k2"]);
+  assert.equal(resolveKeyPools(keys(4), [], 3).partitioned, false);
+});
+
+test("reservedForVideo 为 0 时不分池", () => {
+  const pools = resolveKeyPools(keys(9), [], 0);
+  assert.equal(pools.partitioned, false);
+  assert.deepEqual(pools.videoKeys, keys(9));
+});
+
+test("显式给了 videoKeys 就完全按它来，不再从主池切", () => {
+  const pools = resolveKeyPools(keys(9), ["vid-a", "vid-b"], 3);
+  assert.deepEqual(pools.videoKeys, ["vid-a", "vid-b"]);
+  assert.deepEqual(pools.imageKeys, keys(6));
+});
+
+test("空串和空白 key 会被剔掉，不占名额", () => {
+  const pools = resolveKeyPools(["a", "", "  ", "b", null, "c"], [], 0);
+  assert.deepEqual(pools.imageKeys, ["a", "b", "c"]);
+});
+
+test("重复的 key 只算一个 —— 限流按 key 算，不按槽位算", () => {
+  // 同一个 key 填 3 遍不会变成 3 份配额。不去重的话池子被虚撑大，
+  // 「留 3 个给视频」可能留的是同一个 key 的三个副本，分池就白做了。
+  const pools = resolveKeyPools(["a", "a", "a", "b", "c", "d"], [], 1);
+  assert.deepEqual(pools.imageKeys, ["a", "b", "c"]);
+  assert.deepEqual(pools.videoKeys, ["d"]);
+  const overlap = pools.imageKeys.filter((k) => pools.videoKeys.includes(k));
+  assert.deepEqual(overlap, []);
+});
+
+test("重复导致 key 不够时，分池会如实退化而不是假装够用", () => {
+  // 表面 6 个，去重后只有 2 个 —— 必须不分池，而不是切出一个空的生图池
+  const pools = resolveKeyPools(["a", "a", "a", "b", "b", "b"], [], 3);
+  assert.equal(pools.partitioned, false);
+  assert.deepEqual(pools.imageKeys, ["a", "b"]);
+  assert.deepEqual(pools.videoKeys, ["a", "b"]);
+});
+
+test("开关默认关闭，只有显式 enabled 才走 headless", () => {
+  assert.equal(agnesHeadlessEnabled({}), false);
+  assert.equal(agnesHeadlessEnabled({ agnesHeadless: {} }), false);
+  assert.equal(agnesHeadlessEnabled({ agnesHeadless: { enabled: false } }), false);
+  assert.equal(agnesHeadlessEnabled({ agnesHeadless: { enabled: true } }), true);
+});
+
+test("extractJSON 能剥掉围栏和前后废话", () => {
+  assert.deepEqual(extractJSON('```json\n[{"a":1}]\n```'), [{ a: 1 }]);
+  assert.deepEqual(extractJSON('好的，结果如下：\n{"best":2}\n希望有帮助'), { best: 2 });
+});
+
+test("extractJSON 不会被字符串里的括号骗到", () => {
+  const raw = '{"best_reason":"画面里有 } 和 { 这样的符号","best":1}';
+  assert.deepEqual(extractJSON(raw), { best_reason: "画面里有 } 和 { 这样的符号", best: 1 });
+});
+
+test("extractJSON 遇到截断的 JSON 明确报错，而不是返回半个对象", () => {
+  assert.throws(() => extractJSON('{"scores":[{"total":8'), /不完整|截断/);
+  assert.throws(() => extractJSON("模型只说了一堆废话"), /没有 JSON/);
+  assert.throws(() => extractJSON(null), /空回复/);
+});
+
+test("三段提示词都在，且候选数会被代入", () => {
+  assert.match(SKILL_DIRECTOR(6), /6/);
+  assert.match(SKILL_JUDGE(6), /6/);
+  assert.ok(SKILL_MOTION().length > 500);
+  // 导演词按张数变化，评委词也是 —— 改候选数时两边都要跟着变
+  assert.notEqual(SKILL_DIRECTOR(6), SKILL_DIRECTOR(9));
+  assert.notEqual(SKILL_JUDGE(6), SKILL_JUDGE(9));
+});

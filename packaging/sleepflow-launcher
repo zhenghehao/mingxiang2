@@ -1,0 +1,66 @@
+#!/bin/zsh
+set -u
+
+resource_dir="$(cd "$(dirname "$0")/../Resources" && pwd)"
+data_dir="${HOME}/Library/Application Support/眠屿工作台"
+config_file="${data_dir}/config.json"
+log_file="${data_dir}/server.log"
+pid_file="${data_dir}/server.pid"
+agnes_log_file="${data_dir}/agnes.log"
+agnes_pid_file="${data_dir}/agnes.pid"
+url="http://127.0.0.1:4319/"
+agnes_url="http://127.0.0.1:8899/bridge/health"
+
+if [[ ! -f "$config_file" ]]; then
+  /usr/bin/osascript -e 'display alert "请先安装眠屿工作台" message "请打开安装包，双击“安装眠屿工作台.command”，完成后再启动应用。" as critical'
+  exit 1
+fi
+
+/bin/mkdir -p "$data_dir"
+
+if ! /usr/bin/curl --silent --fail --max-time 1 "$agnes_url" >/dev/null 2>&1; then
+  /usr/bin/nohup "$resource_dir/runtime/node" "$resource_dir/app/agnes/cors-proxy.js" \
+    >>"$agnes_log_file" 2>&1 &
+  agnes_pid=$!
+  print -r -- "$agnes_pid" > "$agnes_pid_file"
+  for _attempt in {1..120}; do
+    if /usr/bin/curl --silent --fail --max-time 1 "$agnes_url" >/dev/null 2>&1; then
+      break
+    fi
+    /bin/sleep 0.25
+  done
+fi
+
+if ! /usr/bin/curl --silent --fail --max-time 1 "$agnes_url" >/dev/null 2>&1; then
+  /usr/bin/osascript -e 'display alert "Agnes 视觉服务没有成功启动" message "请查看：~/Library/Application Support/眠屿工作台/agnes.log" as critical'
+  exit 1
+fi
+
+if ! /usr/bin/curl --silent --fail --max-time 1 "${url}api/status" >/dev/null 2>&1; then
+  if [[ -f "$pid_file" ]]; then
+    old_pid="$(/bin/cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$old_pid" ]] && ! /bin/kill -0 "$old_pid" >/dev/null 2>&1; then
+      /bin/rm -f "$pid_file"
+    fi
+  fi
+
+  SLEEPFLOW_CONFIG_FILE="$config_file" /usr/bin/nohup \
+    "$resource_dir/runtime/node" "$resource_dir/app/server.mjs" \
+    >>"$log_file" 2>&1 &
+  server_pid=$!
+  print -r -- "$server_pid" > "$pid_file"
+
+  for _attempt in {1..160}; do
+    if /usr/bin/curl --silent --fail --max-time 1 "${url}api/status" >/dev/null 2>&1; then
+      break
+    fi
+    /bin/sleep 0.25
+  done
+fi
+
+if /usr/bin/curl --silent --fail --max-time 1 "${url}api/status" >/dev/null 2>&1; then
+  /usr/bin/open "$url"
+else
+  /usr/bin/osascript -e 'display alert "眠屿工作台没有成功启动" message "请查看：~/Library/Application Support/眠屿工作台/server.log" as critical'
+  exit 1
+fi

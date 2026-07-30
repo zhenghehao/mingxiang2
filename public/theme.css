@@ -1,0 +1,769 @@
+/* ==========================================================================
+   冥想一键工作流 · 视觉主题「夜屿」
+   --------------------------------------------------------------------------
+   在 styles.css 之后加载，只覆盖视觉层（配色 / 材质 / 层次 / 节奏），
+   不改结构和交互，这样后续调 UI 不会碰坏工作流逻辑。
+
+   设计取向：产品是助眠冥想内容的生产线，界面自己也该是安静的。
+   用深夜靛蓝作底、月光紫作强调，卡片用轻微透光的玻璃质感，
+   避免高饱和与硬边，长时间盯着不累。
+   ========================================================================== */
+
+:root {
+  /* 底层：夜空 */
+  --canvas: #0d0f1a;
+  --shell: #12142100;
+  --surface: rgba(255, 255, 255, 0.045);
+  --surface-soft: rgba(255, 255, 255, 0.03);
+  --surface-solid: #161930;
+
+  /* 线条：极淡，靠层次而不是描边来分区 */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  /* 文字：主体不用纯白，降低夜间刺眼感 */
+  --text: #e8e9f2;
+  --muted: #9295b0;
+  --quiet: #63668a;
+
+  /* 强调：月光紫 → 雾蓝 */
+  --purple: #8b7cf6;
+  --purple-2: #6ea8fe;
+  --purple-soft: rgba(139, 124, 246, 0.16);
+  --accent-grad: linear-gradient(120deg, #8b7cf6 0%, #6ea8fe 100%);
+
+  --green: #45d19a;
+  --red: #ff7b7b;
+  --amber: #f2c26b;
+
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  --shadow-soft: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+/* 页面底色 + 极慢的极光渐变，作为整个界面的呼吸感来源 */
+body {
+  background:
+    radial-gradient(1100px 600px at 12% -8%, rgba(139, 124, 246, 0.16), transparent 60%),
+    radial-gradient(900px 520px at 92% 4%, rgba(110, 168, 254, 0.13), transparent 62%),
+    radial-gradient(800px 700px at 68% 108%, rgba(80, 200, 190, 0.07), transparent 60%),
+    var(--canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------- 外壳 / 顶栏 */
+
+.app-shell {
+  background: rgba(20, 23, 42, 0.72);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.app-bar {
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  height: 62px;
+}
+
+.app-mark {
+  background: var(--accent-grad);
+  color: #0d0f1a;
+  box-shadow: 0 4px 16px rgba(139, 124, 246, 0.4);
+  font-weight: 700;
+}
+.app-name strong { letter-spacing: .04em; }
+.app-context { color: var(--quiet); font-size: 13px; }
+
+/* 顶栏按钮：安静，hover 才浮起来 */
+.top-actions .button,
+.button.quiet {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 7px 13px;
+  font-size: 13px;
+  transition: background .18s ease, color .18s ease, border-color .18s ease;
+}
+.top-actions .button:hover,
+.button.quiet:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.service-dot { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05); }
+
+/* --------------------------------------------------------- 左栏 */
+
+.left-rail {
+  background: rgba(255, 255, 255, 0.022);
+  border-right: 1px solid var(--line);
+}
+
+.new-task {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  border-radius: 12px;
+  font-weight: 500;
+  transition: background .18s ease, transform .18s ease;
+}
+.new-task:hover { background: rgba(255, 255, 255, 0.09); }
+.new-task:active { transform: scale(.99); }
+
+.rail-label {
+  color: var(--quiet);
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.task-item {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--muted);
+  text-align: left;
+}
+.task-item.selected {
+  background: var(--purple-soft);
+  border-color: rgba(139, 124, 246, 0.28);
+  color: #cfc6ff;
+}
+
+.rail-chip {
+  background: rgba(139, 124, 246, 0.14);
+  color: #b8adff;
+  border: 1px solid rgba(139, 124, 246, 0.2);
+}
+
+.rail-bottom { color: var(--quiet); border-top: 1px solid var(--line); }
+
+/* --------------------------------------------------------- 主看板 */
+
+.main-stage { background: transparent; }
+
+.board-title strong {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  background: linear-gradient(100deg, #ffffff 10%, #b9b4e8 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.board-title span { color: var(--quiet); }
+
+.board-progress-bar {
+  background: rgba(255, 255, 255, 0.07);
+  height: 5px;
+}
+.board-progress-bar span {
+  background: var(--accent-grad);
+  box-shadow: 0 0 14px rgba(139, 124, 246, 0.55);
+}
+.board-progress strong { color: var(--muted); }
+
+/* 步骤卡：玻璃质感，靠左侧一条竖线把 11 步串成时间线 */
+.stage-list { position: relative; }
+.stage-list::before {
+  content: "";
+  position: absolute;
+  left: 26px;
+  top: 18px;
+  bottom: 18px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--line), transparent);
+  pointer-events: none;
+}
+
+.stage {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: background .2s ease, border-color .2s ease, transform .2s ease;
+}
+.stage:hover { background: rgba(255, 255, 255, 0.062); }
+.stage.open {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(139, 124, 246, 0.32);
+}
+.stage.running {
+  border-color: rgba(139, 124, 246, 0.45);
+  box-shadow: 0 0 0 1px rgba(139, 124, 246, 0.12), 0 10px 34px rgba(139, 124, 246, 0.12);
+}
+.stage.error { border-color: rgba(255, 123, 123, 0.42); }
+
+.stage-head:hover { background: transparent; }
+
+/* 序号圆点：未开始是空心，进行中会呼吸，完成填满 */
+.stage-marker {
+  width: 26px; height: 26px;
+  background: var(--surface-solid);
+  border: 1px solid var(--line-strong);
+  color: var(--quiet);
+  font-size: 11.5px;
+  position: relative;
+  z-index: 1;
+}
+.stage.done .stage-marker {
+  background: rgba(69, 209, 154, 0.16);
+  border-color: rgba(69, 209, 154, 0.4);
+  color: var(--green);
+}
+.stage.running .stage-marker {
+  background: rgba(139, 124, 246, 0.2);
+  border-color: rgba(139, 124, 246, 0.55);
+  color: #c4baff;
+  animation: stage-pulse 2.2s ease-in-out infinite;
+}
+.stage.error .stage-marker {
+  background: rgba(255, 123, 123, 0.16);
+  border-color: rgba(255, 123, 123, 0.45);
+  color: var(--red);
+}
+
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 124, 246, 0.32); }
+  50%      { box-shadow: 0 0 0 7px rgba(139, 124, 246, 0); }
+}
+
+.stage-title strong { color: var(--text); font-weight: 550; }
+.stage-title small { color: var(--quiet); }
+.stage.running .stage-title small { color: #a99bf0; }
+
+.stage-status { font-size: 11.5px; letter-spacing: .02em; }
+.stage.done .stage-status { color: var(--green); }
+.stage.running .stage-status { color: #a99bf0; }
+.stage.error .stage-status { color: var(--red); }
+.stage-caret { color: var(--quiet); }
+
+.stage-body { border-top: 1px solid var(--line); }
+.stage-empty, .stage-note { color: var(--quiet); }
+
+/* 展开后的文稿：等宽正文，长文阅读友好 */
+.artifact-head { color: var(--quiet); letter-spacing: .04em; }
+.artifact pre {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line);
+  color: #cfd2e6;
+  line-height: 1.85;
+  font-family: "SF Mono", ui-monospace, "PingFang SC", monospace;
+  font-size: 12px;
+}
+.artifact pre::-webkit-scrollbar { width: 8px; }
+.artifact pre::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12); border-radius: 4px;
+}
+
+.stage-events time { color: var(--quiet); font-size: 11.5px; }
+.stage-event strong { color: var(--text); font-weight: 500; }
+.stage-event span { color: var(--quiet); }
+
+/* 发布结果表 */
+.platform-row {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+}
+.platform-row.success {
+  background: rgba(69, 209, 154, 0.09);
+  border-color: rgba(69, 209, 154, 0.2);
+}
+.platform-row.failed {
+  background: rgba(255, 123, 123, 0.08);
+  border-color: rgba(255, 123, 123, 0.2);
+}
+.platform-row.success .platform-state { color: var(--green); }
+.platform-row.failed .platform-state { color: var(--red); }
+.platform-msg { color: var(--quiet); }
+
+.manual-box {
+  background: rgba(242, 194, 107, 0.09);
+  border: 1px solid rgba(242, 194, 107, 0.22);
+}
+.manual-box strong { color: var(--amber); }
+.manual-row small { color: var(--quiet); }
+
+/* 成品文件 */
+.file-row + .file-row { border-top: 1px solid var(--line); }
+.file-row small { color: var(--quiet); }
+.file-actions button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 8px;
+  transition: background .16s ease, color .16s ease;
+}
+.file-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+/* --------------------------------------------------------- 底部操作区 */
+
+.composer {
+  background: rgba(22, 25, 48, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  box-shadow: 0 -4px 40px rgba(0, 0, 0, 0.3);
+  padding: 12px 14px;
+}
+/* 交出任务后整块藏掉，纵向空间还给流程图；用 display:none 而不是 hidden 属性，
+   是为了让 app.js 的 syncComposer() 只管一个 class。 */
+.composer.collapsed { display: none; }
+
+/* 收起后的替代品：一行字 + 「新任务」，高度只有原来的十分之一 */
+.composer-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(22, 25, 48, 0.6);
+  font-size: 12.5px;
+  color: var(--quiet);
+}
+.composer-summary[hidden] { display: none; }
+.composer-summary button { flex: 0 0 auto; }
+
+.composer-meta { border-bottom: 1px solid var(--line); }
+.composer-meta input { color: var(--muted); }
+.composer-meta input::placeholder { color: var(--quiet); }
+.composer-meta input:focus { color: var(--text); }
+
+/* 时段选择：选中的一侧点亮 */
+.period-option {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  transition: background .18s ease, border-color .18s ease;
+}
+.period-option:hover { background: rgba(255, 255, 255, 0.07); }
+.period-option.selected {
+  background: var(--purple-soft);
+  border-color: rgba(139, 124, 246, 0.42);
+  color: var(--text);
+}
+.period-option strong { color: var(--text); }
+.period-option small { color: var(--quiet); }
+.period-icon {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+}
+.period-option.selected .period-icon {
+  background: var(--accent-grad);
+  color: #0d0f1a;
+}
+
+.auto-topic-note { color: var(--quiet); }
+.auto-topic-note span {
+  background: rgba(69, 209, 154, 0.16);
+  color: var(--green);
+  border-radius: 5px;
+}
+.auto-topic-note strong { color: var(--muted); }
+
+.engine-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: var(--quiet);
+  border-radius: 8px;
+}
+
+/* 主按钮：整个界面唯一的高光点 */
+.send-button, .button.primary {
+  background: var(--accent-grad);
+  border: 0;
+  color: #0b0d18;
+  font-weight: 600;
+  border-radius: 11px;
+  box-shadow: 0 6px 22px rgba(139, 124, 246, 0.38);
+  transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+.send-button:hover:not(:disabled), .button.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px rgba(139, 124, 246, 0.5);
+  filter: brightness(1.06);
+}
+.send-button:active:not(:disabled) { transform: translateY(0); }
+.send-button:disabled { box-shadow: none; filter: grayscale(.5); }
+
+.text-button { color: var(--purple); }
+.text-button:hover { color: #b8adff; }
+
+/* --------------------------------------------------------- Agnes / 模态框 */
+
+.integrated-rail {
+  background: rgba(255, 255, 255, 0.022);
+  border-left: 1px solid var(--line);
+}
+.studio-head, .studio-tabs, .studio-footer { border-color: var(--line); }
+.studio-tabs button { color: var(--quiet); }
+.studio-tabs button.active { color: var(--text); }
+
+.modal {
+  background: rgba(20, 23, 42, 0.96);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.modal::backdrop { background: rgba(6, 7, 14, 0.6); backdrop-filter: blur(4px); }
+.modal input, .modal textarea, .modal select {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 9px;
+}
+.modal input::placeholder, .modal textarea::placeholder { color: var(--quiet); }
+.modal input:focus, .modal textarea:focus, .modal select:focus {
+  border-color: rgba(139, 124, 246, 0.5);
+  outline: none;
+}
+
+/* --------------------------------------------------------- 滚动条 */
+
+.stage-list::-webkit-scrollbar { width: 9px; }
+.stage-list::-webkit-scrollbar-track { background: transparent; }
+.stage-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.stage-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: content-box; }
+
+/* 卡片入场动画：**只在首次绘制时播一次**。
+   之前这里是无条件 animation，而步骤列表每 900ms 轮询重渲染一次，
+   于是 11 张卡片每秒都从 opacity:0 重新淡入 —— 表现为整屏持续闪烁。
+   现在由 JS 只在首次渲染时加 .first-paint，动画结束即失效。 */
+@media (prefers-reduced-motion: no-preference) {
+  .stage-list.first-paint .stage { animation: stage-in .34s cubic-bezier(.22, .8, .3, 1) both; }
+  .stage-list.first-paint .stage:nth-child(1) { animation-delay: .01s }
+  .stage-list.first-paint .stage:nth-child(2) { animation-delay: .03s }
+  .stage-list.first-paint .stage:nth-child(3) { animation-delay: .05s }
+  .stage-list.first-paint .stage:nth-child(4) { animation-delay: .07s }
+  .stage-list.first-paint .stage:nth-child(5) { animation-delay: .09s }
+  .stage-list.first-paint .stage:nth-child(6) { animation-delay: .11s }
+  .stage-list.first-paint .stage:nth-child(n+7) { animation-delay: .13s }
+}
+@keyframes stage-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+}
+
+/* 顶栏副标题是一整条流程，字号收一档避免抢主标题 */
+.app-context { font-size: 12px; letter-spacing: .01em; }
+/* 未选中的时段图标在深色下太暗，提一点亮度 */
+.period-option:not(.selected) .period-icon { color: var(--muted); }
+
+/* --------------------------------------------------------- Agnes 视觉弹窗
+   面板已经从 .workspace 的第三列搬进 #visualModal（见 index.html）。
+   之前挤在 ~520px 窄栏里，Agnes 内部的九宫格候选图和视频播放器会被裁掉，
+   现在整屏显示。主区因此永远是两列。 */
+
+.workspace { grid-template-columns: 250px minmax(0, 1fr); }
+/* 第三列没了以后主区宽出一大截，860px 的阅读宽度会在右边留一片空白，
+   看板和底部输入区对不齐。放宽到 1080px，仍然不至于一行太长。 */
+.board-head, .stage-list { max-width: 1080px; }
+
+.visual-modal {
+  width: 96vw;
+  max-width: none;
+  height: 94vh;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+}
+/* .integrated-rail 原样式是 grid + 四行模板（头 58 / 标签 42 / 内容 1fr / 页脚 34）。
+   必须保持 grid —— 之前改成 flex 把面板内部布局整个拆散过一次。 */
+.visual-modal .integrated-rail {
+  display: grid;
+  height: 100%;
+  border-left: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+/* 弹窗里 iframe 要吃满剩下的高度，Agnes 页面自己会滚动 */
+.visual-modal .studio-panel.active { display: block; height: 100%; }
+.visual-modal .agnes-panel iframe { width: 100%; height: 100%; }
+
+/* 关闭按钮原本只在窄屏出现，弹窗形态下必须一直在 */
+.studio-close { display: block; }
+
+/* styles.css 在 ≤920px 会把 .integrated-rail 变成 position:fixed 并
+   translateX 推到屏幕外（当年的抽屉式实现）。现在它在 <dialog> 里，
+   那套定位会把面板整个移出可视区，必须拆掉。 */
+@media (max-width: 1100px) {
+  .workspace { grid-template-columns: 220px minmax(0, 1fr); }
+}
+@media (max-width: 920px) {
+  .visual-modal .integrated-rail {
+    position: static;
+    inset: auto;
+    width: auto;
+    transform: none;
+    border: 0;
+    box-shadow: none;
+  }
+}
+@media (max-width: 760px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .visual-modal { width: 100vw; height: 100vh; border-radius: 0; }
+}
+
+/* 时长输入：跟日期同一行，克制一点，不抢主按钮 */
+.duration-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line);
+  transition: border-color .16s ease, background .16s ease;
+}
+.duration-field:focus-within {
+  border-color: rgba(139, 124, 246, 0.5);
+  background: rgba(139, 124, 246, 0.1);
+}
+.duration-field input {
+  width: 42px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: right;
+  padding: 0;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.duration-field input::-webkit-outer-spin-button,
+.duration-field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.duration-field input::placeholder { color: var(--quiet); }
+.duration-field span { color: var(--quiet); font-size: 12.5px; }
+
+/* 时长框继承了 .composer-meta input 的 min-width:138px，会把名称输入挤出容器 */
+.duration-field { flex: 0 0 auto; }
+.duration-field input { min-width: 0 !important; width: 44px; }
+.composer-meta { flex-wrap: nowrap; align-items: center; }
+.composer-meta #outputName { flex: 1 1 auto; min-width: 0; }
+
+/* --------------------------------------------------------- Agnes 面板配色
+   之前只改了容器，里面的 tab / 占位 / 成品列表 / 页脚还是浅色底，
+   打开后是一块刺眼的白。 */
+
+.integrated-rail { background: rgba(18, 21, 38, 0.92); }
+.studio-head { background: transparent; border-bottom: 1px solid var(--line); }
+.studio-identity strong { color: var(--text); }
+.studio-identity small { color: var(--quiet); }
+.agnes-mark { background: var(--accent-grad); color: #0d0f1a; font-weight: 700; }
+
+.icon-button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 8px;
+}
+.icon-button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+.studio-tabs { background: transparent; border-bottom: 1px solid var(--line); }
+.studio-tabs button { background: transparent; border: 0; }
+.studio-tabs button.active { color: var(--text); border-bottom-color: var(--purple); }
+
+.studio-panel, .agnes-panel, .output-panel { background: transparent; }
+.agnes-frame-state {
+  background: rgba(13, 15, 26, 0.9);
+  color: var(--muted);
+}
+.agnes-frame-state strong { color: var(--text); }
+.agnes-frame-state small { color: var(--quiet); }
+
+/* iframe 里是 Agnes 自己的页面，主题管不到，给个深色底避免加载时白闪 */
+#agnesFrame { background: #0d0f1a; border: 0; }
+
+.output-list, .output-item { background: transparent; color: var(--text); }
+.output-item { border-bottom: 1px solid var(--line); }
+.output-item span { color: var(--quiet); }
+.output-empty, .run-note { color: var(--quiet); }
+.output-actions button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+}
+.output-actions button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+.studio-footer {
+  background: transparent;
+  border-top: 1px solid var(--line);
+  color: var(--quiet);
+}
+.studio-footer button { background: transparent; border: 0; color: var(--purple); }
+
+/* 失败任务的续跑条：能续跑用强调色，不能续跑用中性色，别用红色吓人 */
+.resume-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  max-width: 860px; width: 100%;
+  padding: 12px 16px; margin-bottom: 10px;
+  border-radius: 12px; flex-shrink: 0;
+}
+.resume-bar div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.resume-bar strong { font-size: 13.5px; font-weight: 600; }
+.resume-bar small { font-size: 12px; color: var(--quiet); }
+.resume-bar.can-resume {
+  background: rgba(139, 124, 246, 0.12);
+  border: 1px solid rgba(139, 124, 246, 0.3);
+}
+.resume-bar.cannot {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+.resume-bar button { flex-shrink: 0; padding: 8px 20px; font-size: 13px; }
+
+/* 每一步展开后的「重跑」条。
+   放在卡片内容最上面 —— 用户是先看不满意的产物、再决定重跑，顺序要对得上。
+   .danger 是那些会连带覆盖已有音视频、或会真的对外发布的档，用琥珀色提示，
+   不用红色：这是一个正常操作，只是代价高，不该被吓住。 */
+/* ------------------------------------------------ 发布状态弹窗 */
+
+.publish-status-modal { width: min(720px, 94vw); max-width: none; }
+.publish-status-body { padding: 14px 16px; overflow-y: auto; display: grid; gap: 16px; }
+.publish-status-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; border-top: 1px solid var(--line);
+}
+.publish-status-foot small { color: var(--quiet); font-size: 11.5px; }
+
+.publish-status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.publish-status-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04);
+}
+.publish-status-card.bad { border-color: rgba(220, 90, 90, 0.35); background: rgba(220, 90, 90, 0.08); }
+.publish-status-card strong { display: block; font-size: 12.5px; }
+.publish-status-card small { color: var(--quiet); font-size: 11.5px; }
+
+.publish-status-alert {
+  padding: 14px; border-radius: 10px;
+  border: 1px solid rgba(220, 90, 90, 0.35); background: rgba(220, 90, 90, 0.08);
+}
+.publish-status-alert strong { display: block; margin-bottom: 4px; }
+.publish-status-alert small { color: var(--muted); }
+
+.publish-section > strong { font-size: 12.5px; }
+/* 登录状态那张表要多一列放平台标签，比默认的 platform-row 宽一点 */
+.publish-section .platform-row { grid-template-columns: 150px 88px 1fr; }
+.platform-row.login-ok .platform-state { color: #2f9e73; }
+.platform-row.login-stale { background: rgba(232, 168, 74, 0.12); }
+.platform-row.login-stale .platform-state { color: #e8a84a; }
+.platform-row.login-missing .platform-state { color: var(--quiet); }
+.platform-name .tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: 5px;
+  font-size: 10.5px; font-style: normal; font-weight: 500;
+}
+.platform-name .tag.auto { background: rgba(120, 140, 255, 0.18); color: #9aa8ff; }
+.platform-name .tag.manual { background: rgba(232, 168, 74, 0.18); color: #e8a84a; }
+
+.publish-job { padding: 8px 0; border-top: 1px solid var(--line); }
+.publish-job-head { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.publish-job-state { font-weight: 600; }
+.publish-job.success .publish-job-state { color: #2f9e73; }
+.publish-job.failed .publish-job-state { color: #d05a5a; }
+.publish-job.partial .publish-job-state,
+.publish-job.running .publish-job-state { color: #e8a84a; }
+.publish-job-title { flex: 1 1 auto; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.publish-job-head time { flex: 0 0 auto; color: var(--quiet); font-size: 11px; }
+
+@media (max-width: 620px) {
+  .publish-status-grid { grid-template-columns: 1fr; }
+  .platform-row, .publish-section .platform-row { grid-template-columns: 1fr; gap: 2px; }
+}
+
+.rerun-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 10px 14px; margin-bottom: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+.rerun-bar div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rerun-bar strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.rerun-bar small { font-size: 11.5px; color: var(--quiet); }
+.rerun-bar button { flex-shrink: 0; padding: 7px 16px; font-size: 12.5px; }
+.rerun-bar button:disabled { opacity: .45; cursor: default; }
+.rerun-bar.danger {
+  background: rgba(232, 168, 74, 0.09);
+  border-color: rgba(232, 168, 74, 0.28);
+}
+.rerun-bar.danger strong { color: #e8a84a; }
+
+/* 磁盘上中断的运行：比失败条更中性，因为它可能只是上次没跑完，不是刚出错 */
+.resumable-runs {
+  max-width: 860px; width: 100%; flex-shrink: 0;
+  margin-bottom: 10px; padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+.resumable-head {
+  font-size: 12px; color: var(--quiet);
+  margin-bottom: 8px; letter-spacing: .02em;
+}
+.resumable-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; padding: 8px 0;
+}
+.resumable-row + .resumable-row { border-top: 1px solid var(--line); }
+.resumable-row div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.resumable-row strong { font-size: 13.5px; font-weight: 550; }
+.resumable-row small {
+  font-size: 12px; color: var(--quiet);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.resumable-row button { flex-shrink: 0; padding: 7px 18px; font-size: 12.5px; }
+/* 上面那条 .resumable-row div 是给左侧标题块写的（竖排），
+   按钮容器要横排，所以在这里覆盖回来。 */
+.resumable-row .resumable-actions {
+  flex-direction: row; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.resumable-row .resumable-actions button[data-discard-run] {
+  padding: 7px 12px; color: var(--quiet);
+}
+.resumable-row .resumable-actions button[data-discard-run]:hover {
+  color: var(--red); border-color: var(--red);
+}
+
+/* 成品弹窗里的文案卡片：直接把 txt 开头贴出来，不用点开就能看对不对 */
+.draft-copy-card { grid-column: span 2; }
+.draft-copy-card pre {
+  margin: 8px 0 10px; padding: 10px 12px; max-height: 168px; overflow: auto;
+  background: var(--surface-soft); border: 1px solid var(--line); border-radius: 9px;
+  font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  color: var(--muted);
+}
+.copy-badge { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--green); }
+.copy-badge.warn { color: var(--red); }
+
+.draft-download-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 14px; padding: 13px 16px;
+  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-soft);
+}
+.draft-download-bar strong { display: block; font-size: 13.5px; }
+.draft-download-bar span { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
+.draft-download-bar .button { flex-shrink: 0; text-decoration: none; display: inline-flex; align-items: center; }

@@ -1,0 +1,47 @@
+2026-07-26 18:15:05.612 | INFO     | uploader.douyin_uploader.main:upload:674 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 18:15:56.077 | INFO     | uploader.douyin_uploader.main:upload:676 - 🥳 上传前检查通过
+2026-07-26 18:16:00.728 | INFO     | uploader.douyin_uploader.main:upload:690 - 🏃 小人开始搬运视频: 蚕房沙沙声里的雪丝被，把一身的疲惫轻轻盖住.mp4
+2026-07-26 18:16:00.729 | INFO     | uploader.douyin_uploader.main:upload:691 - 🧭 小人正在赶往上传主页
+2026-07-26 18:16:09.943 | INFO     | uploader.douyin_uploader.main:upload:711 - 🥳 已经进入 version_2 发布页面
+2026-07-26 18:16:10.945 | INFO     | uploader.douyin_uploader.main:upload:718 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 18:16:33.050 | INFO     | uploader.douyin_uploader.main:upload:720 - 🏷️ 小人一共贴了 4 个话题
+2026-07-26 18:16:33.392 | INFO     | uploader.douyin_uploader.main:upload:728 - 🏃 小人正在努力上传视频
+2026-07-26 18:16:35.990 | SUCCESS  | uploader.douyin_uploader.main:upload:726 - 🥳 视频已经传完啦
+2026-07-26 18:16:35.990 | INFO     | uploader.douyin_uploader.main:set_thumbnail:631 - 🏃 小人正在设置视频封面
+2026-07-26 18:16:48.048 | INFO     | uploader.douyin_uploader.main:set_thumbnail:657 - 🖼️ 竖版封面已上传到预览
+2026-07-26 18:16:48.474 | INFO     | uploader.douyin_uploader.main:set_thumbnail:670 - 🥳 视频封面设置完成
+2026-07-26 18:21:35.730 | INFO     | uploader.douyin_uploader.main:upload:675 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 18:21:45.035 | INFO     | uploader.douyin_uploader.main:upload:677 - 🥳 上传前检查通过
+2026-07-26 18:21:48.720 | INFO     | uploader.douyin_uploader.main:upload:691 - 🏃 小人开始搬运视频: 蚕房沙沙声里的雪丝被，把一身的疲惫轻轻盖住.mp4
+2026-07-26 18:21:48.721 | INFO     | uploader.douyin_uploader.main:upload:692 - 🧭 小人正在赶往上传主页
+2026-07-26 18:21:55.478 | INFO     | uploader.douyin_uploader.main:upload:712 - 🥳 已经进入 version_2 发布页面
+2026-07-26 18:21:56.481 | INFO     | uploader.douyin_uploader.main:upload:719 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 18:22:11.715 | INFO     | uploader.douyin_uploader.main:upload:721 - 🏷️ 小人一共贴了 4 个话题
+2026-07-26 18:22:12.489 | SUCCESS  | uploader.douyin_uploader.main:upload:727 - 🥳 视频已经传完啦
+2026-07-26 18:22:12.489 | INFO     | uploader.douyin_uploader.main:set_thumbnail:631 - 🏃 小人正在设置视频封面
+2026-07-26 18:22:20.267 | INFO     | uploader.douyin_uploader.main:set_thumbnail:657 - 🖼️ 竖版封面已上传到预览
+2026-07-26 18:22:20.540 | INFO     | uploader.douyin_uploader.main:set_thumbnail:670 - 🥳 视频封面设置完成
+2026-07-26 21:23:01.735 | INFO     | uploader.douyin_uploader.main:upload:683 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 21:23:13.074 | INFO     | uploader.douyin_uploader.main:upload:685 - 🥳 上传前检查通过
+2026-07-26 21:23:16.758 | INFO     | uploader.douyin_uploader.main:upload:699 - 🏃 小人开始搬运视频: 一盘未收的棋局，在松窗下微光如玉，陪你轻轻放下疲惫，缓缓入睡.mp4
+2026-07-26 21:23:16.758 | INFO     | uploader.douyin_uploader.main:upload:700 - 🧭 小人正在赶往上传主页
+2026-07-26 21:23:24.480 | INFO     | uploader.douyin_uploader.main:upload:720 - 🥳 已经进入 version_2 发布页面
+2026-07-26 21:23:25.481 | INFO     | uploader.douyin_uploader.main:upload:727 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 21:23:40.563 | INFO     | uploader.douyin_uploader.main:upload:729 - 🏷️ 小人一共贴了 5 个话题
+2026-07-26 21:23:40.844 | INFO     | uploader.douyin_uploader.main:upload:737 - 🏃 小人正在努力上传视频
+2026-07-26 21:23:43.129 | SUCCESS  | uploader.douyin_uploader.main:upload:735 - 🥳 视频已经传完啦
+2026-07-26 21:23:43.129 | INFO     | uploader.douyin_uploader.main:set_thumbnail:631 - 🏃 小人正在设置视频封面
+2026-07-26 21:23:51.509 | INFO     | uploader.douyin_uploader.main:set_thumbnail:657 - 🖼️ 竖版封面已上传到预览
+2026-07-26 21:23:52.741 | INFO     | uploader.douyin_uploader.main:set_thumbnail:678 - 🥳 视频封面设置完成
+2026-07-26 23:27:55.165 | INFO     | uploader.douyin_uploader.main:upload:683 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 23:28:09.288 | INFO     | uploader.douyin_uploader.main:upload:685 - 🥳 上传前检查通过
+2026-07-26 23:28:13.161 | INFO     | uploader.douyin_uploader.main:upload:699 - 🏃 小人开始搬运视频: 一盘未收的棋局，在松窗下微光如玉，陪你轻轻放下疲惫，缓缓入睡.mp4
+2026-07-26 23:28:13.162 | INFO     | uploader.douyin_uploader.main:upload:700 - 🧭 小人正在赶往上传主页
+2026-07-26 23:28:20.198 | INFO     | uploader.douyin_uploader.main:upload:720 - 🥳 已经进入 version_2 发布页面
+2026-07-26 23:28:21.200 | INFO     | uploader.douyin_uploader.main:upload:727 - ✍️ 小人开始填标题、描述和话题
+2026-07-26 23:28:41.057 | INFO     | uploader.douyin_uploader.main:upload:729 - 🏷️ 小人一共贴了 5 个话题
+2026-07-26 23:28:43.339 | SUCCESS  | uploader.douyin_uploader.main:upload:735 - 🥳 视频已经传完啦
+2026-07-26 23:28:43.340 | INFO     | uploader.douyin_uploader.main:set_thumbnail:631 - 🏃 小人正在设置视频封面
+2026-07-26 23:28:55.081 | INFO     | uploader.douyin_uploader.main:set_thumbnail:657 - 🖼️ 竖版封面已上传到预览
+2026-07-26 23:28:56.357 | INFO     | uploader.douyin_uploader.main:set_thumbnail:678 - 🥳 视频封面设置完成
+2026-07-26 23:58:15.016 | INFO     | uploader.douyin_uploader.main:upload:683 - 🧍 小人先检查 cookie、视频文件、封面和发布时间

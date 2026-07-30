@@ -1,0 +1,29 @@
+2026-07-26 18:17:10.686 | INFO     | uploader.ks_uploader.main:upload:453 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 18:17:23.011 | SUCCESS  | uploader.ks_uploader.main:cookie_auth:169 - 🥳 cookie 有效
+2026-07-26 18:17:23.454 | INFO     | uploader.ks_uploader.main:upload:455 - 🥳 上传前检查通过
+2026-07-26 18:17:32.614 | INFO     | uploader.ks_uploader.main:upload:474 - 🏃 小人开始搬运视频: 蚕房里沙沙响，一床雪丝被裹着睡觉.mp4
+2026-07-26 18:17:32.615 | INFO     | uploader.ks_uploader.main:upload:475 - 🧭 小人正在赶往快手上传主页
+2026-07-26 18:17:46.738 | INFO     | uploader.ks_uploader.main:upload:497 - ✍️ 小人开始填描述和话题
+2026-07-26 18:17:48.130 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 1 个话题: #助眠
+2026-07-26 18:17:50.190 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 2 个话题: #白噪音
+2026-07-26 18:17:52.268 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 3 个话题: #蚕房
+2026-07-26 18:17:54.354 | SUCCESS  | uploader.ks_uploader.main:upload:516 - 🥳 视频已经传完啦
+2026-07-26 18:17:54.354 | INFO     | uploader.ks_uploader.main:set_thumbnail:427 - 🖼️ 小人准备设置封面
+2026-07-26 18:17:58.922 | SUCCESS  | uploader.ks_uploader.main:set_thumbnail:450 - 🥳 封面已经设置完成
+2026-07-26 21:24:06.117 | INFO     | uploader.ks_uploader.main:upload:453 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 21:24:14.801 | SUCCESS  | uploader.ks_uploader.main:cookie_auth:169 - 🥳 cookie 有效
+2026-07-26 21:24:15.108 | INFO     | uploader.ks_uploader.main:upload:455 - 🥳 上传前检查通过
+2026-07-26 21:24:19.081 | INFO     | uploader.ks_uploader.main:upload:474 - 🏃 小人开始搬运视频: 松窗下那盘没下完的棋.mp4
+2026-07-26 21:24:19.082 | INFO     | uploader.ks_uploader.main:upload:475 - 🧭 小人正在赶往快手上传主页
+2026-07-26 21:24:29.928 | INFO     | uploader.ks_uploader.main:upload:497 - ✍️ 小人开始填描述和话题
+2026-07-26 21:24:31.669 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 1 个话题: #助眠
+2026-07-26 21:24:33.730 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 2 个话题: #国风
+2026-07-26 21:24:35.797 | INFO     | uploader.ks_uploader.main:upload:506 - 🏷️ 小人正在添加第 3 个话题: #放松
+2026-07-26 21:24:37.892 | SUCCESS  | uploader.ks_uploader.main:upload:516 - 🥳 视频已经传完啦
+2026-07-26 21:24:37.892 | INFO     | uploader.ks_uploader.main:set_thumbnail:427 - 🖼️ 小人准备设置封面
+2026-07-26 21:24:41.714 | SUCCESS  | uploader.ks_uploader.main:set_thumbnail:450 - 🥳 封面已经设置完成
+2026-07-26 23:29:17.542 | INFO     | uploader.ks_uploader.main:upload:453 - 🧍 小人先检查 cookie、视频文件、封面和发布时间
+2026-07-26 23:29:26.825 | SUCCESS  | uploader.ks_uploader.main:cookie_auth:169 - 🥳 cookie 有效
+2026-07-26 23:29:27.129 | INFO     | uploader.ks_uploader.main:upload:455 - 🥳 上传前检查通过
+2026-07-26 23:29:31.206 | INFO     | uploader.ks_uploader.main:upload:474 - 🏃 小人开始搬运视频: 松窗下那盘没下完的棋.mp4
+2026-07-26 23:29:31.206 | INFO     | uploader.ks_uploader.main:upload:475 - 🧭 小人正在赶往快手上传主页

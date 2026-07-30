@@ -1,0 +1,13 @@
+只读目标：/Users/shareit/Desktop/冥想一键工作流
+
+修改前目录聚合 SHA-256：
+d1905eb873587e11435a9c2eaff8776a719614a1d86e66eb269bfbfc0fcc3ab7
+
+修改后目录聚合 SHA-256：
+d1905eb873587e11435a9c2eaff8776a719614a1d86e66eb269bfbfc0fcc3ab7
+
+结论：零变化。
+
+校验方法：
+find <目录> -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256
+
