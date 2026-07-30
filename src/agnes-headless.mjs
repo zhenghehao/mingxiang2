@@ -20,6 +20,7 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { CancelledError, resolveMediaBinary } from "./media.mjs";
 import { SKILL_DIRECTOR, SKILL_MOTION, SKILL_JUDGE } from "./agnes-prompts.mjs";
 
@@ -47,8 +48,20 @@ const DEFAULTS = {
   // 实测一条 5 秒循环视频从提交到 completed 约 127 秒，排队时长会浮动，
   // 200 × 3 秒 = 10 分钟的预算留足余量。轮询本身很轻，等不到才是真问题。
   videoPollMax: 200,
-  videoPollIntervalMs: 3000
+  videoPollIntervalMs: 3000,
+  // 片头那张半透明封面。原来写死在 cors-proxy.js 旁边（ROOT/cover.png），改成
+  // headless 后一度变成必须手填的配置项，结果 default-config 留空、data/config.json
+  // 又不进仓库 —— 云端跑出来的片子就悄悄没了封面。现在默认指向仓库自带的这张，
+  // 本地和 runner 拿到的是同一个文件。
+  coverPath: "assets/cover.png"
 };
+
+// 仓库根目录：本文件在 <root>/src/ 下。相对路径的 coverPath 按它解析，
+// 这样不管从哪个工作目录启动（server.mjs / run-once.mjs / CI）结果都一样。
+//
+// 必须走 fileURLToPath，不能用 new URL(...).pathname —— 后者是百分号编码的，
+// 项目目录名带中文和空格（"冥想一键工作流 2"），拿到手会是 %E5%86%A5... 找不着文件。
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // 2026-07-30：只把 mist / fog / haze 从负面词里拿掉，clouds 保留。
 // 被当成"雾"的多半是浅景深虚化和镜头光晕，那正是真实感照片好看的地方；
@@ -125,8 +138,23 @@ function settings(config = {}) {
     motionUrl: String(merged.motionUrl || "").replace(/\/$/, ""),
     scorerKeys: clean(merged.scorerKeys),
     motionKeys: clean(merged.motionKeys),
+    coverPath: resolveCoverPath(merged.coverPath),
     candidateCount: Math.max(1, Math.min(12, Number(merged.candidateCount) || DEFAULTS.candidateCount))
   };
+}
+
+/**
+ * 片头封面图的路径解析。
+ *
+ * 留空 = 用仓库自带的那张（不是"不要封面"）。想彻底不要封面，写 "off"。
+ * 之所以把空串解释成"用默认"，是因为空串这个值最容易是**漏填**而不是真想关掉，
+ * 而漏填的代价是成片悄悄少了片头 —— 云端就这么丢过一次。
+ */
+export function resolveCoverPath(raw) {
+  const value = String(raw ?? "").trim();
+  if (/^(off|none|false|no)$/i.test(value)) return "";
+  if (!value) return path.join(REPO_ROOT, DEFAULTS.coverPath);
+  return path.isAbsolute(value) ? value : path.resolve(REPO_ROOT, value);
 }
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
@@ -577,7 +605,7 @@ async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick }) 
  * 合成两段成品：纯循环去音版 + 封面淡出去音版。
  * 逻辑照搬 agnes-playground/cors-proxy.js 的 compose()。
  */
-async function compose(config, agnes, videoUrl, outputDir, { signal, workDir }) {
+async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, onNote }) {
   const ffmpeg = resolveMediaBinary(config.media?.ffmpegPath, "ffmpeg");
   const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const tmpIn = path.join(workDir, `med_in_${id}.mp4`);
@@ -594,6 +622,11 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir }) 
   let hasCover = false;
   if (coverPath) {
     hasCover = await stat(coverPath).then(() => true).catch(() => false);
+    // 配了路径却找不到文件，只能是配错或文件没跟着走。以前这里悄悄退回纯净版，
+    // 成片少了片头也没人知道（云端就这么丢了一整轮）。现在必须吵出来。
+    if (!hasCover) onNote?.(`⚠ 片头封面图不存在，本次成片没有封面：${coverPath}`);
+  } else {
+    onNote?.("片头封面已按配置关闭（coverPath=off），成片不带封面");
   }
   if (hasCover) {
     await runFfmpeg(ffmpeg, [
@@ -696,8 +729,8 @@ export async function generateAgnesVisualsHeadless(config, { article, title = ""
     // 6) 合成
     ensureLive();
     report("done", 92, "正在整理两段视觉成品");
-    const composed = await compose(config, agnes, videoUrl, outputDir, { signal, workDir });
-    report("done", 100, "视觉成品已完成");
+    const composed = await compose(config, agnes, videoUrl, outputDir, { signal, workDir, onNote: note });
+    report("done", 100, composed.hasCover ? "视觉成品已完成（片头带封面）" : "视觉成品已完成（无片头封面）");
 
     return {
       jobId,

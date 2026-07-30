@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import {
   agnesHeadlessEnabled,
   extractJSON,
+  resolveCoverPath,
   resolveKeyPools
 } from "../src/agnes-headless.mjs";
 import { SKILL_DIRECTOR, SKILL_JUDGE, SKILL_MOTION } from "../src/agnes-prompts.mjs";
@@ -106,6 +109,34 @@ test("9 把 key：6 把生图、3 把待命，待命池首轮不参与", () => {
   assert.deepEqual(pools.spareKeys, ["k7", "k8", "k9"]);
   // 待命的意义就在于「没被用过」——和生图池有任何交集都等于白留
   assert.deepEqual(pools.spareKeys.filter((k) => pools.imageKeys.includes(k)), []);
+});
+
+test("片头封面：留空走仓库自带那张，而不是没有封面", () => {
+  // 这条是回归测试。云端跑出来的成片曾经整轮没有片头，原因就是 default-config
+  // 里 coverPath 留了空串，而空串当时被解释成「不要封面」——漏填和主动关闭
+  // 必须区分开，否则丢了片头也没有任何迹象。
+  for (const blank of ["", "   ", null, undefined]) {
+    assert.equal(path.basename(resolveCoverPath(blank)), "cover.png");
+    assert.ok(path.isAbsolute(resolveCoverPath(blank)), "必须解析成绝对路径，否则换工作目录就找不着");
+  }
+});
+
+test("片头封面：仓库里真的带着那张图", () => {
+  // 默认值指向仓库内的文件，文件本身没跟着提交的话默认值就是个空头支票。
+  // CI 上没有 data/config.json，全靠这张兜底。
+  assert.ok(existsSync(resolveCoverPath("")), "assets/cover.png 必须在仓库里");
+});
+
+test("片头封面：相对路径按仓库根解析，绝对路径原样用", () => {
+  const rel = resolveCoverPath("assets/cover.png");
+  assert.equal(resolveCoverPath(""), rel, "默认值和显式写同一个相对路径应当等价");
+  assert.equal(resolveCoverPath("/tmp/别的封面.png"), "/tmp/别的封面.png");
+});
+
+test("片头封面：只有显式 off 才真的不要封面", () => {
+  for (const off of ["off", "OFF", "none", "false", "no"]) {
+    assert.equal(resolveCoverPath(off), "");
+  }
 });
 
 test("不分池时待命池为空，生图退回在主池里轮换", () => {
