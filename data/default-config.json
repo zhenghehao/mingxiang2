@@ -60,11 +60,12 @@
     "ffmpegPath": "bundled",
     "ffprobePath": "bundled",
     "introSeconds": 10,
-    "bgmGainDb": -35,
+    "bgmGainDb": -15,
     "fadeSeconds": 25,
     "videoQuality": "balanced",
     "width": 1080,
-    "height": 1920
+    "height": 1920,
+    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。"
   },
   "agnes": {
     "enabled": false,

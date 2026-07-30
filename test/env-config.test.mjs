@@ -140,3 +140,20 @@ test("文本引擎三项可以被环境变量覆盖", () => {
   assert.equal(out.textProvider.baseUrl, "https://example.test/v1/chat/completions");
   assert.equal(out.textProvider.model, "some-model");
 });
+
+test("默认配置的音色和混音参数要和本机一致 —— CI 出的片不能是另一个味道", async () => {
+  // CI 上没有 config.json，全靠 default-config。之前它缺 voiceId（人声直接失败），
+  // bgmGainDb 还差 20dB（背景音乐几乎听不见）—— 同一套代码出来的成品会完全两样。
+  const { readFile } = await import("node:fs/promises");
+  const url = (name) => new URL(`../data/${name}`, import.meta.url);
+  const dflt = JSON.parse(await readFile(url("default-config.json"), "utf8"));
+  const local = JSON.parse(await readFile(url("config.json"), "utf8")).minimax ? JSON.parse(await readFile(url("config.json"), "utf8")) : null;
+  assert.ok(dflt.minimax.voiceId, "voiceId 不能为空，否则 MiniMax 直接报错");
+  if (!local) return; // 别人克隆时没有 config.json，跳过对比
+  for (const key of ["voiceId", "model", "speed", "emotion", "pitch", "volume"]) {
+    assert.equal(dflt.minimax[key], local.minimax[key], `minimax.${key} 两边应一致`);
+  }
+  for (const key of ["introSeconds", "fadeSeconds", "bgmGainDb"]) {
+    assert.equal(dflt.media[key], local.media[key], `media.${key} 影响成品听感，两边应一致`);
+  }
+});
