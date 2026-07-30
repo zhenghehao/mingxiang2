@@ -1,5 +1,7 @@
 name: 生成一集冥想
 
+# 手动触发。定时跑的话在下面加 schedule，但建议先手动跑顺了再说 ——
+# 定时任务失败时没人看日志，白烧额度。
 on:
   workflow_dispatch:
     inputs:
@@ -21,22 +23,34 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
+    # 整条流水线实测约 20 分钟；给足余量，卡住时也不会白占 6 小时
     timeout-minutes: 90
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      # ffmpeg 用 npm 包里自带的（ffmpeg-static / ffprobe-static），
+      # 不装系统 ffmpeg —— 版本可控，和本机跑出来的结果一致。
       - name: 安装依赖
         run: npm ci --omit=dev || npm install --omit=dev
+
       - name: 生成
         env:
+          # ── 密钥（仓库 Settings → Secrets and variables → Actions → Secrets）──
           TEXT_API_KEY: ${{ secrets.TEXT_API_KEY }}
           MINIMAX_SUBSCRIPTION_KEY: ${{ secrets.MINIMAX_SUBSCRIPTION_KEY }}
+          # 封面出图用的 SenseNova
           SENSENOVA_API_KEYS: ${{ secrets.SENSENOVA_API_KEYS }}
+          # Agnes 主池：提示词 / 生图 / 生视频，发给 api.agnes-ai.cn
           AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
-          AGNES_SCORER_KEYS: ${{ secrets.AGNES_SCORER_KEYS }}
-          AGNES_MOTION_KEYS: ${{ secrets.AGNES_MOTION_KEYS }}
+          # 评委和运动导演走的也是 SenseNova，但和封面那批是不同的 key
+          SENSENOVA_SCORER_KEYS: ${{ secrets.SENSENOVA_SCORER_KEYS }}
+          SENSENOVA_MOTION_KEYS: ${{ secrets.SENSENOVA_MOTION_KEYS }}
+          # ── 路径：全部指向仓库内 ──
           MEDITATION_OUTPUT_ROOT: output
           MEDITATION_SKILL_ROOTS: skills
           MEDITATION_BGM_ROOT: assets/bgm
@@ -49,6 +63,8 @@ jobs:
             --date "${{ inputs.date }}" \
             --brief "${{ inputs.brief }}" \
             --minutes "${{ inputs.minutes }}"
+
+      # 成品几十上百 MB，走 artifact。默认存 90 天，够你下载了。
       - name: 上传成品
         if: always()
         uses: actions/upload-artifact@v4
