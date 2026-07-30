@@ -5,7 +5,7 @@
  * 代码和仓库里都没有真值。
  */
 import crypto from "node:crypto";
-import { env, issue, setSession, clearSession, body } from "./_lib.js";
+import { env, issue, setSession, clearSession, body, shape } from "./_lib.js";
 
 /** 各自 sha256 再比：定长，常量时间，且不会从耗时里漏出长度。 */
 function same(a, b) {
@@ -40,6 +40,15 @@ export default async function handler(req, res) {
   const passOk = same(input.password || "", password);
 
   if (!(userOk && passOk)) {
+    // 诊断只写**服务端日志**（Vercel 的 Runtime Logs，只有项目所有者看得到），
+    // HTTP 响应里绝不带这些 —— 长度对爆破方也是信息。
+    // 只打形状：位数、有没有被 trim 掉空白、哪一项不匹配。
+    console.warn("[登录失败]",
+      `账号${userOk ? "匹配" : "不匹配"}`,
+      `口令${passOk ? "匹配" : "不匹配"}`,
+      "｜配置侧:", shape("CONSOLE_USER"), shape("CONSOLE_PASSWORD"),
+      "｜提交侧:", `账号${String(input.user || "").length}位`, `口令${String(input.password || "").length}位`);
+
     // 固定延迟：错就秒回的话，快慢本身就是可以拿来爆破的信号。
     await new Promise((r) => setTimeout(r, 400));
     // 不说是账号错还是口令错，同一句话。

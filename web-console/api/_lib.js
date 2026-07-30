@@ -11,11 +11,28 @@ import crypto from "node:crypto";
 const COOKIE = "mx_session";
 const TTL_SECONDS = 12 * 60 * 60;
 
-/** 缺环境变量要当场喊出来。静默降级会变成「登录页能打开但永远登不进去」。 */
+/**
+ * 缺环境变量要当场喊出来。静默降级会变成「登录页能打开但永远登不进去」。
+ *
+ * 值一律 trim：往 Vercel 的输入框里粘贴时很容易带进尾部空格或换行，而这里的
+ * 比较是精确的，带了尾部换行的值和不带的值不相等 —— 表现就是口令明明
+ * 填对了却一直说不对，且没有任何线索。首尾空白从来不是密钥的一部分。
+ */
 export function env(name) {
-  const value = process.env[name];
-  if (!value) throw new Error(`缺少环境变量 ${name}`);
-  return value;
+  const raw = process.env[name];
+  if (!raw || !String(raw).trim()) throw new Error(`缺少环境变量 ${name}`);
+  return String(raw).trim();
+}
+
+/** 只暴露形状，不暴露内容 —— 给日志用，和 check-secrets.mjs 同一套脱敏规矩。 */
+export function shape(name) {
+  const raw = process.env[name];
+  if (raw === undefined) return `${name}=未设置`;
+  const s = String(raw);
+  const flags = [];
+  if (s !== s.trim()) flags.push("首尾有空白（已自动 trim）");
+  if (/[\r\n]/.test(s)) flags.push("含换行");
+  return `${name}=${s.trim().length}位${flags.length ? "，" + flags.join("、") : ""}`;
 }
 
 function hmac(body, secret) {
