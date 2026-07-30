@@ -12,10 +12,17 @@
  * 只在这一层做覆盖，不在各模块里各读各的 —— 否则「这个值到底从哪来」会散成一片。
  */
 
-/** 逗号、分号或换行分隔的列表 → 数组。顺手去空白、去空项、去重。 */
+/**
+ * 分隔符列表 → 数组。顺手去空白、去空项、去重。
+ *
+ * 半角逗号、全角逗号「，」、顿号「、」、分号、换行、空格全都认。
+ * 原来只认 /[,;\n]/ —— 在 GitHub Secrets 里用中文输入法打逗号是很自然的事，
+ * 而全角逗号切不开会把整串当成一把 key，请求 401，报错只说「无效的令牌」，
+ * 完全看不出是分隔符的问题。这种坑不该让填的人去躲。
+ */
 function splitList(raw) {
   return [...new Set(
-    String(raw || "").split(/[,;\n]/).map((item) => item.trim()).filter(Boolean)
+    String(raw || "").split(/[,、，;；\s]+/).map((item) => item.trim()).filter(Boolean)
   )];
 }
 
@@ -47,8 +54,11 @@ const STRING_VARS = {
   AGNES_TEXT_MODEL: "agnesHeadless.textModel",
   AGNES_IMAGE_MODEL: "agnesHeadless.imgModel",
   AGNES_VIDEO_MODEL: "agnesHeadless.vidModel",
-  AGNES_SCORER_URL: "agnesHeadless.scorerUrl",
-  AGNES_MOTION_URL: "agnesHeadless.motionUrl"
+  // 评委和运动导演走的是 SenseNova，不是 Agnes —— 它们只是服务于 Agnes
+  // 那条视觉流水线，所以配置字段挂在 agnesHeadless 下面。但环境变量名要说明
+  // 「这是什么」而不是「谁在用」，否则填 secret 时会去找 Agnes 的 key，填错。
+  SENSENOVA_SCORER_URL: "agnesHeadless.scorerUrl",
+  SENSENOVA_MOTION_URL: "agnesHeadless.motionUrl"
 };
 
 /** 列表类：逗号/换行分隔。 */
@@ -56,8 +66,8 @@ const LIST_VARS = {
   MEDITATION_SKILL_ROOTS: "skillRoots",
   AGNES_API_KEYS: "agnesHeadless.apiKeys",
   AGNES_VIDEO_KEYS: "agnesHeadless.videoKeys",
-  AGNES_SCORER_KEYS: "agnesHeadless.scorerKeys",
-  AGNES_MOTION_KEYS: "agnesHeadless.motionKeys"
+  SENSENOVA_SCORER_KEYS: "agnesHeadless.scorerKeys",
+  SENSENOVA_MOTION_KEYS: "agnesHeadless.motionKeys"
 };
 
 /** 数字类。 */

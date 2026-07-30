@@ -82,3 +82,29 @@ test("路径都换成非本机后，localOnlyPaths 干净", () => {
   });
   assert.deepEqual(localOnlyPaths(config), []);
 });
+
+test("全角逗号、顿号、空格都要能切开 —— 中文输入法的默认是全角", () => {
+  // 全角逗号切不开会把整串当成一把 key，请求 401，报错只说「无效的令牌」，
+  // 完全看不出是分隔符的问题。这个坑不该让填 secret 的人去躲。
+  const expected = ["sk-aaa", "sk-bbb", "sk-ccc"];
+  for (const raw of [
+    "sk-aaa,sk-bbb,sk-ccc",
+    "sk-aaa，sk-bbb，sk-ccc",
+    "sk-aaa， sk-bbb， sk-ccc",
+    "sk-aaa、sk-bbb、sk-ccc",
+    "sk-aaa\nsk-bbb\nsk-ccc",
+    "  sk-aaa ;sk-bbb；sk-ccc  "
+  ]) {
+    const out = applyEnvOverrides(base(), { AGNES_API_KEYS: raw }).config.agnesHeadless.apiKeys;
+    assert.deepEqual(out, expected, `切不开：${JSON.stringify(raw)}`);
+  }
+});
+
+test("评委和运动导演的变量名是 SENSENOVA 开头 —— 它们本来就是 SenseNova", () => {
+  const out = applyEnvOverrides(base(), {
+    SENSENOVA_SCORER_KEYS: "sk-s1,sk-s2",
+    SENSENOVA_MOTION_KEYS: "sk-m1"
+  }).config;
+  assert.deepEqual(out.agnesHeadless.scorerKeys, ["sk-s1", "sk-s2"]);
+  assert.deepEqual(out.agnesHeadless.motionKeys, ["sk-m1"]);
+});

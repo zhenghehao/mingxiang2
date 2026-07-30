@@ -29,7 +29,9 @@ import { fileURLToPath } from "node:url";
 function readSenseNovaKeys() {
   const raw = [process.env.SENSENOVA_API_KEYS, process.env.SENSENOVA_API_KEY]
     .filter(Boolean).join(",");
-  return [...new Set(raw.split(/[,;\n]/).map((k) => k.trim()).filter(Boolean))];
+  // 分隔符全都认：半角逗号、全角逗号、顿号、分号、换行、空格。
+  // 全角逗号是中文输入法的默认，切不开会把整串当成一把 key。
+  return [...new Set(raw.split(/[,、，;；\s]+/).map((k) => k.trim()).filter(Boolean))];
 }
 const SENSENOVA_KEYS = readSenseNovaKeys();
 
