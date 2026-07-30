@@ -22,6 +22,9 @@ extensions/draft-publisher/**/__pycache__/
 extensions/draft-publisher/**/.uv-cache/
 # uv sync 会就地 build 这个包，产出的元数据目录没必要进仓库
 extensions/draft-publisher/**/*.egg-info/
+# Python 字节码，任何目录都不进仓库（跑一次脚本就会生成）
+__pycache__/
+*.py[cod]
 # 平台登录 cookie —— 绝对不能进仓库
 extensions/draft-publisher/app/cookiesFile/
 extensions/draft-publisher/app/.publisher_data/

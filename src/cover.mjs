@@ -250,14 +250,29 @@ async function composeCoverText(photoPath, outputPath, subtitle, spec) {
     "--title-ratio", String(spec.titleRatio),
     "--subtitle-ratio", String(spec.subtitleRatio)
   ];
+  // strict-font：字体不对就让这一步失败。封面字体错了不会报错、只是"看着不像"，
+  // 而成品是要发出去的 —— 宁可这里红一次，也不要一批封面发完才发现字体不对。
+  args.push("--strict-font");
+
   await new Promise((resolve, reject) => {
-    const child = spawn("python3", args, { stdio: ["ignore", "ignore", "pipe"] });
+    // stdout 必须收。脚本最后那行会打印**实际用到的字体文件和 index**，
+    // 那是唯一能确认拿到的是宋体而不是降级字体的信息。丢掉它，
+    // 就等于在 CI 上永远无法判断封面字体对不对。
+    const child = spawn("python3", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
     let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => reject(new Error(`叠字脚本起不来：${error.message}`)));
-    child.on("close", (code) => code === 0
-      ? resolve()
-      : reject(new Error(`叠字失败（退出码 ${code}）：${stderr.slice(-300)}`)));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        return reject(new Error(`叠字失败（退出码 ${code}）：${stderr.slice(-300)}`));
+      }
+      const line = stdout.trim().split("\n").pop();
+      if (line) console.log(`  叠字：${line}`);
+      if (stderr.trim()) console.log(`  叠字提示：${stderr.trim().slice(-300)}`);
+      resolve();
+    });
   });
 }
 

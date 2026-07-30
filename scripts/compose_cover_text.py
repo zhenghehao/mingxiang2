@@ -23,57 +23,74 @@ try:
 except ImportError:
     sys.exit("需要 Pillow：python3 -m pip install pillow")
 
-# 字族 → (路径, 主标题 ttc index, 副标题 ttc index)
+# 字族 → 候选列表，每个候选是 (主标题文件, index, 副标题文件, index)。
 #
-# ttc 是字体集合，一个文件里塞了多个字重，要用 index 选。Songti.ttc 里的简体字重是：
-#   0 SC Black / 1 SC Bold / 3 SC Light / 6 SC Regular（2、5、7 是繁体 TC）
-# 主标题取 Bold、副标题取 Regular —— 层次靠字重拉开，不必把主标题撑得过大。
-# 宋体的横细竖粗在深色底上比黑体更容易发虚，所以副标题不用 Light。
-# macOS 在前、Linux 在后。CI 跑在 ubuntu-latest 上，那边没有 Songti，
-# 装 fonts-noto-cjk 后会有 Noto Serif/Sans CJK —— 宋体对应 Serif、黑体对应 Sans。
-# 顺序即优先级，找不到就往下试，一个都没有才报错。
+# 主副标题**允许来自不同文件**。这是必须的：macOS 的 Songti.ttc 一个文件里就有
+# 多个字重（0 SC Black / 1 SC Bold / 3 SC Light / 6 SC Regular；2、5、7 是繁体
+# TC），靠 index 就能选；而 Linux 的 Noto CJK 把每个字重拆成了独立文件，Bold 和
+# Regular 是两个 .ttc，同一个文件里取不到两种字重。若强行让主副标题共用一个文件，
+# 副标题会跟主标题一样粗，CI 出的封面和本机的就不是一个样子。
+#
+# 主标题 Bold、副标题 Regular —— 层次靠字重拉开，不必把主标题撑得过大。
+# 宋体横细竖粗，在深色底上比黑体更容易发虚，所以副标题不用 Light。
+#
+# Noto CJK 的 .ttc 里语言变体顺序是 0 JP / 1 KR / 2 SC / 3 TC，简体取 index 2。
+# 宋体对应 Serif、黑体对应 Sans，都由 fonts-noto-cjk 提供（已核对 Ubuntu 包内容）。
+# macOS 在前、Linux 在后，顺序即优先级。
+_SONGTI_MAC = "/System/Library/Fonts/Supplemental/Songti.ttc"
+_NOTO_SERIF_B = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc"
+_NOTO_SERIF_R = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"
+_NOTO_SANS_B = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+_NOTO_SANS_R = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+
 FONT_FAMILIES = {
     "songti": [
-        ("/System/Library/Fonts/Supplemental/Songti.ttc", 1, 6),
-        ("/System/Library/Fonts/Supplemental/Songti.ttc", 0, 4),
-        ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc", 2, 2),
-        ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc", 2, 2),
-        ("/usr/share/fonts/truetype/noto/NotoSerifCJK-Bold.ttc", 2, 2),
+        (_SONGTI_MAC, 1, _SONGTI_MAC, 6),
+        (_SONGTI_MAC, 0, _SONGTI_MAC, 4),
+        (_NOTO_SERIF_B, 2, _NOTO_SERIF_R, 2),
+        (_NOTO_SERIF_R, 2, _NOTO_SERIF_R, 2),
     ],
     "heiti": [
-        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 1, 0),
-        ("/System/Library/Fonts/STHeiti Medium.ttc", 0, 0),
-        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0, 0),
-        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 2, 2),
-        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2, 2),
+        ("/System/Library/Fonts/Hiragino Sans GB.ttc", 1, "/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+        ("/System/Library/Fonts/STHeiti Medium.ttc", 0, "/System/Library/Fonts/STHeiti Medium.ttc", 0),
+        (_NOTO_SANS_B, 2, _NOTO_SANS_R, 2),
+        (_NOTO_SANS_R, 2, _NOTO_SANS_R, 2),
     ],
 }
 
 
 def load_fonts(title_px, subtitle_px, family):
     """
-    返回 (主标题字体, 副标题字体, 用了哪个文件)。
+    返回 (主标题字体, 副标题字体, 说明文字, 是否降级到了别的字族)。
 
-    第三个返回值是给日志用的。在 CI 上「没报错」不等于「字体对」——
-    ttc 里的 index 是猜的，猜错可能拿到日文或韩文字形的 CJK 变体，
-    中文照样能渲染但字形别扭。把实际用到的文件和 index 打出来，
-    出问题时一眼能看到是哪个，而不是对着一张怪图猜。
+    说明文字是给日志用的。在 CI 上「没报错」不等于「字体对」—— ttc 的 index
+    选错会拿到日文或韩文字形的 CJK 变体，中文照样渲染但字形别扭。把实际用到的
+    文件和 index 打出来，出问题时一眼看到是哪个，而不是对着一张怪图猜。
+
+    第四个返回值是降级标记。跨字族降级（要宋体拿到黑体）**必须让调用方知道**：
+    封面照样能出，但已经不是你要的样子了，静默通过等于交了一张错的图。
     """
     last = None
-    # 指定的字族排在前面，其余作为兜底 —— 换机器时字体可能不全，
-    # 宁可换个字体出图，也不要因为缺字体让整张封面失败。
-    order = FONT_FAMILIES.get(family, []) + [
-        item for key, group in FONT_FAMILIES.items() if key != family for item in group
-    ]
-    for path, bold_idx, light_idx in order:
-        for indices in ((bold_idx, light_idx), (0, 0)):
+    wanted = FONT_FAMILIES.get(family, [])
+    # 指定字族优先，其余作为兜底 —— 换机器时字体可能不全，
+    # 宁可换个字体出图，也不要因为缺字体让整张封面失败。但要如实汇报。
+    others = [item for key, group in FONT_FAMILIES.items() if key != family for item in group]
+
+    for candidates, downgraded in ((wanted, False), (others, True)):
+        for title_path, title_idx, sub_path, sub_idx in candidates:
             try:
-                title = ImageFont.truetype(path, title_px, index=indices[0])
-                sub = ImageFont.truetype(path, subtitle_px, index=indices[1])
-                name = "/".join(filter(None, title.getname()))
-                return title, sub, f"{os.path.basename(path)}[{indices[0]},{indices[1]}] {name}"
-            except Exception as exc:  # 字体缺失或 index 越界，换下一个
+                title = ImageFont.truetype(title_path, title_px, index=title_idx)
+                sub = ImageFont.truetype(sub_path, subtitle_px, index=sub_idx)
+            except Exception as exc:  # 字体缺失或 index 越界，换下一个候选
                 last = exc
+                continue
+            name = "/".join(filter(None, title.getname()))
+            if os.path.basename(title_path) == os.path.basename(sub_path):
+                where = f"{os.path.basename(title_path)}[{title_idx},{sub_idx}]"
+            else:
+                where = f"{os.path.basename(title_path)}[{title_idx}] + {os.path.basename(sub_path)}[{sub_idx}]"
+            return title, sub, f"{where} {name}", downgraded
+
     sys.exit(f"找不到可用的中文字体：{last}")
 
 
@@ -102,8 +119,14 @@ def draw_text_block(image, title, subtitle, opts):
     width, height = image.size
     title_px = max(24, int(height * opts.title_ratio))
     subtitle_px = max(16, int(height * opts.subtitle_ratio))
-    title_font, subtitle_font, font_used = load_fonts(title_px, subtitle_px, opts.font)
+    title_font, subtitle_font, font_used, downgraded = load_fonts(title_px, subtitle_px, opts.font)
     opts._font_used = font_used
+    if downgraded:
+        # 走 stderr：这条必须被看见。cover.mjs 只把 stderr 收进错误信息里，
+        # 而且 --strict-font 下会直接失败，不让一张错字体的封面悄悄过关。
+        print(f"警告：要的是 {opts.font}，但系统里没有，降级用了 {font_used}", file=sys.stderr)
+        if opts.strict_font:
+            sys.exit(f"--strict-font 已开启，拒绝用降级字体出图（要 {opts.font}，实得 {font_used}）")
 
     # 左侧压暗，保证浅色字在任何照片上都读得清
     if opts.scrim > 0:
@@ -158,6 +181,9 @@ def main():
     ap.add_argument("--subtitle-ratio", type=float, default=0.052)
     ap.add_argument("--font", choices=sorted(FONT_FAMILIES), default="songti",
                     help="字族：songti 宋体（默认）/ heiti 黑体")
+    ap.add_argument("--strict-font", action="store_true",
+                    help="要的字族不在就直接失败，不降级出图。CI 上建议开着 —— "
+                         "宁可红一次，也不要拿到一批字体不对的封面才发现")
     ap.add_argument("--gap-ratio", type=float, default=0.42, help="主副标题间距，相对主标题字号")
     ap.add_argument("--left-ratio", type=float, default=0.058, help="左边距占图宽比例")
     ap.add_argument("--vertical-ratio", type=float, default=0.44, help="文字块垂直位置，0 顶 1 底")

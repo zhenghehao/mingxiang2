@@ -27,9 +27,14 @@ const mask = (k) => `${k.slice(0, 6)}…${k.slice(-4)}(${k.length}位)`;
 
 console.log(`Agnes 端点 ${agnesBase} · 模型 ${agnesModel}（跟随 default-config，可用环境变量覆盖）\n`);
 
+// 记账。CI 上必须靠退出码把结论传出去 —— 只在日志里打 ✗ 而进程 exit 0，
+// workflow 会是绿的，等于告诉你「密钥没问题」，那比不体检更糟。
+const missing = [];
+const failed = [];
+
 for (const [name, url, model] of GROUPS) {
   const keys = split(process.env[name]);
-  if (!keys.length) { console.log(`✗ ${name}  没设`); continue; }
+  if (!keys.length) { console.log(`✗ ${name}  没设`); missing.push(name); continue; }
   console.log(`${name}  ${keys.length} 把：${keys.map(mask).join("  ")}`);
   for (const [i, key] of keys.entries()) {
     try {
@@ -37,11 +42,17 @@ for (const [name, url, model] of GROUPS) {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_tokens: 4 }),
-        signal: AbortSignal.timeout(45000)
+        // 15 秒足够判断鉴权。原来 45 秒会让几把坏 key 把整轮体检拖成好几分钟，
+        // 而体检的价值就在于快 —— 慢到要等，就不会有人在正式跑之前先跑它。
+        signal: AbortSignal.timeout(15000)
       });
       let msg = ""; try { msg = JSON.parse(await r.text()).error?.message || ""; } catch {}
       console.log(`   ${r.ok ? "✓" : "✗"} #${i + 1} HTTP ${r.status} ${msg.slice(0, 60)}`);
-    } catch (e) { console.log(`   ✗ #${i + 1} ${e.message}`); }
+      if (!r.ok) failed.push(`${name}#${i + 1} HTTP ${r.status}`);
+    } catch (e) {
+      console.log(`   ✗ #${i + 1} ${e.message}`);
+      failed.push(`${name}#${i + 1} ${e.message}`);
+    }
   }
 }
 console.log("\n出口 IP（用来判断是不是被按地区拦了）：");
@@ -50,5 +61,21 @@ try {
   console.log("  ", (await r.json()).ip);
 } catch (e) { console.log("  查不到：", e.message); }
 
-console.log("\nMINIMAX_SUBSCRIPTION_KEY:", process.env.MINIMAX_SUBSCRIPTION_KEY
-  ? mask(process.env.MINIMAX_SUBSCRIPTION_KEY) : "没设");
+// MiniMax 只看有没有，不发试探请求 —— t2a 那个接口一调就真的合成音频、真的计费，
+// 为体检花这个钱不值得。所以它缺失只提醒，不算失败。
+const minimaxSet = Boolean(process.env.MINIMAX_SUBSCRIPTION_KEY);
+console.log("\nMINIMAX_SUBSCRIPTION_KEY:", minimaxSet
+  ? `${mask(process.env.MINIMAX_SUBSCRIPTION_KEY)}（只验证存在，没发请求：调一次就会真的合成并计费）`
+  : "没设 —— 人声那一步会直接失败");
+
+console.log("\n" + "=".repeat(56));
+if (missing.length) console.log(`没设：${missing.join("、")}`);
+if (failed.length) console.log(`调不通：${failed.join("、")}`);
+if (!minimaxSet) console.log("没设：MINIMAX_SUBSCRIPTION_KEY");
+
+if (missing.length || failed.length || !minimaxSet) {
+  console.log("\n体检未通过。上面每一条都会让正式跑在对应的步骤上失败，先修再跑。");
+  // 退出码 1 → workflow 变红。绿勾必须真的代表「可以跑了」。
+  process.exit(1);
+}
+console.log("\n全部通过，可以跑正式生成。");
