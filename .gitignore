@@ -30,6 +30,10 @@ extensions/draft-publisher/app/cookiesFile/
 extensions/draft-publisher/app/.publisher_data/
 # 跑过的任务记录，只对当时那台机器有意义
 work/draft-jobs/
+# draftQueue 是同一类东西：跑过的平台任务记录，含真实标题和本机绝对路径
+extensions/draft-publisher/app/draftQueue/
+# 账号库：只存 cookie 文件名和账号名，但账号名会把这个仓库关联到真实频道
+extensions/draft-publisher/app/db/
 
 # Vercel 控制台：真实账号口令和 token 只放本机这个文件，永不进仓库
 web-console/.env.local
