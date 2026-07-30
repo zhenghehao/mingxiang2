@@ -54,8 +54,16 @@ test("继承 baseUrl、温度和鉴权方式，只换模型名", () => {
   assert.equal(out.topic.authPrefix, "");
 });
 
-test("实际配置文件里的分工就是 02/03 用 pro、01/04 用 flash", async () => {
-  const config = JSON.parse(await readFile(new URL("../data/config.json", import.meta.url), "utf8"));
+test("实际配置文件里的分工就是 02/03 用 pro、01/04 用 flash", async (t) => {
+  // 这条校验的是**本机**的 config.json，而它不进仓库（含密钥和绝对路径）。
+  // 新克隆和 CI 上没有这个文件，只能跳过 —— 不是代码坏了。
+  const config = await readFile(new URL("../data/config.json", import.meta.url), "utf8")
+    .then(JSON.parse)
+    .catch(() => null);
+  if (!config) {
+    t.skip("本机没有 data/config.json，跳过实配校验");
+    return;
+  }
   const out = buildStageProviders(config);
   assert.equal(out.topic?.model, "deepseek-v4-flash", "01 选题应该用 flash");
   assert.equal(out.copy?.model, "deepseek-v4-flash", "04 发布文案应该用 flash");

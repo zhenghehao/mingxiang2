@@ -11,7 +11,7 @@
 
 | 目录 | 是什么 | 放到哪 |
 | --- | --- | --- |
-| `冥想一键工作流/` | 主程序（Node，端口 4319） | `~/Desktop/冥想一键工作流` |
+| `冥想一键工作流/` | 主程序（Node，端口 4318） | `~/Desktop/冥想一键工作流` |
 | `agnes-playground/` | 出画面的 Agnes（端口 8899） | `~/Desktop/agnes-playground` |
 | `最终发布/` | 发平台的工具（Python，端口 8199） | `~/Desktop/最终发布` |
 | `素材/bgm`、`素材/video` | 背景音乐和垫底视频库 | 见第 3 步 |
@@ -63,7 +63,7 @@ python -m playwright install chromium
 ~/Desktop/未命名文件夹 6/未命名文件夹 4   ← 视频素材
 ```
 
-把包里的 `素材/bgm` 和 `素材/video` 分别拷过去；或者在 4319 界面的
+把包里的 `素材/bgm` 和 `素材/video` 分别拷过去；或者在 4318 界面的
 「素材库」里改成你喜欢的路径。
 
 ## 4. Skills
@@ -89,7 +89,7 @@ python -m playwright install chromium
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 ```
 
-然后在 4319 界面「发布到各平台 → 查看发布状态」里看，显示「需要重新登录」
+然后在 4318 界面「发布到各平台 → 查看发布状态」里看，显示「需要重新登录」
 或「未登录」的，去那个平台的创作后台重新扫码一次。
 
 **小红书不自动发。** 2026-07-25 它就自动化发布发过账号违规预警，所以留手动。
@@ -97,12 +97,12 @@ python -m playwright install chromium
 ## 6. 跑通验证
 
 ```bash
-cd ~/Desktop/冥想一键工作流 && npm start     # 4319
+cd ~/Desktop/冥想一键工作流 && npm start     # 4318
 cd ~/Desktop/agnes-playground && node cors-proxy.js   # 8899
 cd ~/Desktop/最终发布 && ./启动发布环境.command        # 8199
 ```
 
-打开 http://127.0.0.1:4319 ，做一篇 3 分钟的短的先走一遍。整条跑完约 40–60 分钟，
+打开 http://127.0.0.1:4318 ，做一篇 3 分钟的短的先走一遍。整条跑完约 40–60 分钟，
 其中 Agnes 出画面 20–40 分钟、导出视频 12 分钟左右。
 
 ## 常见问题

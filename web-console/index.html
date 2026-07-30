@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>冥想工作流 · 线上控制台</title>
+<style>
+  :root {
+    --bg: #0d0f16; --panel: #151824; --line: #242938; --line2: #2f3549;
+    --text: #e8eaf2; --dim: #8b91a8; --dim2: #5e657d;
+    --accent: #7c6cf5; --accent2: #9a8dff;
+    --ok: #34d399; --warn: #fbbf24; --bad: #f87171; --run: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh;
+    font: 15px/1.6 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--dim); font-size: 13px; margin-top: 4px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 6px; letter-spacing: .3px; }
+  input, select {
+    width: 100%; padding: 10px 12px; background: #0f1220; color: var(--text);
+    border: 1px solid var(--line2); border-radius: 9px; font: inherit; font-size: 14px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 9px;
+    padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--accent2); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; border: 1px solid var(--line2); color: var(--dim); font-weight: 400; }
+  button.ghost:hover:not(:disabled) { background: #1b1f2e; color: var(--text); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .row > div { flex: 1; min-width: 130px; }
+  .hidden { display: none !important; }
+  .msg { font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-top: 12px; }
+  .msg.bad { background: rgba(248,113,113,.1); color: var(--bad); border: 1px solid rgba(248,113,113,.25); }
+  .msg.ok  { background: rgba(52,211,153,.1); color: var(--ok); border: 1px solid rgba(52,211,153,.25); }
+  .msg.info{ background: rgba(96,165,250,.1); color: var(--run); border: 1px solid rgba(96,165,250,.25); }
+  .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; gap: 12px; }
+  .runs { display: flex; flex-direction: column; gap: 8px; }
+  .run {
+    border: 1px solid var(--line); border-radius: 11px; background: #11141f;
+    padding: 13px 15px; cursor: pointer;
+  }
+  .run:hover { border-color: var(--line2); }
+  .run-top { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+  .run-name { font-size: 14px; font-weight: 500; }
+  .run-meta { color: var(--dim2); font-size: 12px; margin-left: auto; text-align: right; white-space: nowrap; }
+  .detail { margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .step { display: flex; gap: 9px; font-size: 13px; padding: 3px 0; color: var(--dim); align-items: center; }
+  .step .nm { color: var(--text); }
+  .arts { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .art {
+    display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
+    background: #1a1e2d; border: 1px solid var(--line2); border-radius: 8px;
+    padding: 7px 12px; color: var(--text); font-size: 13px;
+  }
+  .art:hover { border-color: var(--accent); }
+  .art span { color: var(--dim2); font-size: 12px; }
+  .note { color: var(--dim2); font-size: 12px; line-height: 1.7; }
+  .note code { background: #1a1e2d; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+  .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(255,255,255,.2);
+          border-top-color: var(--run); border-radius:50%; animation: sp .8s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  @media (max-width: 560px) { .run-meta { margin-left: 0; text-align: left; width: 100%; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 登录 -->
+  <div id="gate">
+    <div class="head"><div><h1>冥想工作流 · 线上控制台</h1><div class="sub">请登录</div></div></div>
+    <div class="card" style="max-width:380px">
+      <label for="user">账号</label>
+      <input id="user" type="text" autocomplete="username" autocapitalize="off" autofocus>
+      <div style="height:14px"></div>
+      <label for="pw">口令</label>
+      <input id="pw" type="password" autocomplete="current-password">
+      <div style="margin-top:16px"><button id="go">进入</button></div>
+      <div id="gateMsg" class="msg bad hidden"></div>
+    </div>
+  </div>
+
+  <!-- 控制台 -->
+  <div id="app" class="hidden">
+    <div class="head">
+      <div><h1>冥想工作流 · 线上控制台</h1><div class="sub">流水线跑在 GitHub Actions 上，这里只负责触发、看状态、下载成品</div></div>
+      <button id="out" class="ghost">退出</button>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div style="flex:0 0 150px">
+          <label for="date">日期（留空＝今天）</label>
+          <input id="date" type="date">
+        </div>
+        <div style="flex:0 0 120px">
+          <label for="brief">时段</label>
+          <select id="brief"><option>晚上</option><option>中午</option></select>
+        </div>
+        <div style="flex:0 0 110px">
+          <label for="min">时长（分钟）</label>
+          <input id="min" type="number" min="1" max="60" value="10">
+        </div>
+        <div style="flex:0 0 auto">
+          <button id="gen">生成一集</button>
+        </div>
+        <div style="flex:0 0 auto">
+          <button id="pre" class="ghost">先体检密钥</button>
+        </div>
+      </div>
+      <div id="runMsg" class="msg hidden"></div>
+      <div class="note" style="margin-top:14px">
+        <strong>体检</strong>约 30 秒，只验证各家密钥在 runner 上能不能用，几乎不耗额度 —— 第一次用、或改过 Secrets 之后先跑这条。<br>
+        <strong>生成一集</strong>约 20 分钟，会真实消耗 API 额度。成品是 artifact，存 90 天。<br>
+        七平台草稿<strong>不在</strong>线上：那需要真实浏览器登录态和扫码，只能在你自己的机器上做。
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin:0 0 12px">
+      <div style="font-size:13px;color:var(--dim)">最近运行</div>
+      <div id="poll" class="hidden"><span class="spin"></span></div>
+      <button id="refresh" class="ghost" style="margin-left:auto;padding:5px 12px;font-size:13px">刷新</button>
+    </div>
+    <div id="runs" class="runs"></div>
+    <div id="listMsg" class="msg hidden"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let openRun = null;   // 当前展开的运行 id
+let timer = null;
+
+function show(el, text, kind) {
+  el.textContent = text;
+  el.className = "msg " + kind;
+}
+function hide(el) { el.className = "msg hidden"; }
+
+async function api(path, options) {
+  const r = await fetch(path, { credentials: "same-origin", ...options });
+  const data = await r.json().catch(() => ({}));
+  // 只认服务端明确标记的 no_session 才算「会话没了」。别拿 401 当判据 ——
+  // 上游 GitHub 也会 401，那时把人踢去重输口令是把锅甩错了地方。
+  if (data.code === "no_session" && !path.includes("/login")) {
+    toGate("会话过期，请重新登录");
+    throw new Error("no_session");
+  }
+  if (!r.ok) throw new Error(data.detail ? `${data.error} · ${data.detail}` : (data.error || `HTTP ${r.status}`));
+  return data;
+}
+
+function toGate(message) {
+  clearInterval(timer); timer = null;
+  $("app").classList.add("hidden");
+  $("gate").classList.remove("hidden");
+  if (message) show($("gateMsg"), message, "bad");
+  // 只清口令，账号留着 —— 会话过期后不用重新打一遍账号。
+  $("pw").value = ""; $("pw").focus();
+}
+
+async function login() {
+  hide($("gateMsg"));
+  $("go").disabled = true;
+  try {
+    await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user: $("user").value.trim(), password: $("pw").value }) });
+    $("pw").value = "";
+    $("gate").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    await load();
+    startPoll();
+  } catch (e) {
+    show($("gateMsg"), e.message, "bad");
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+// 状态 → 颜色 / 文字。GitHub 的 status 和 conclusion 是两个字段：
+// 跑完了看 conclusion，没跑完看 status。
+function look(run) {
+  if (run.status !== "completed") {
+    return { color: "var(--run)", text: run.status === "queued" ? "排队中" : "运行中", live: true };
+  }
+  const map = {
+    success: { color: "var(--ok)", text: "成功" },
+    failure: { color: "var(--bad)", text: "失败" },
+    cancelled: { color: "var(--dim2)", text: "已取消" },
+    skipped: { color: "var(--dim2)", text: "跳过" },
+    timed_out: { color: "var(--bad)", text: "超时" }
+  };
+  return map[run.conclusion] || { color: "var(--warn)", text: run.conclusion || "未知" };
+}
+
+function when(iso) {
+  const d = new Date(iso), now = Date.now();
+  const min = Math.round((now - d) / 60000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return min + " 分钟前";
+  if (min < 1440) return Math.round(min / 60) + " 小时前";
+  return d.toLocaleDateString("zh-Hans");
+}
+
+const size = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+
+async function load() {
+  hide($("listMsg"));
+  let runs;
+  try {
+    ({ runs } = await api("/api/runs"));
+  } catch (e) {
+    if (e.message !== "no_session") show($("listMsg"), e.message, "bad");
+    return;
+  }
+
+  const box = $("runs");
+  box.textContent = "";
+  if (!runs.length) {
+    show($("listMsg"), "还没有任何运行记录。点上面「先体检密钥」跑第一条。", "info");
+    return;
+  }
+
+  for (const run of runs) {
+    const face = look(run);
+    const card = document.createElement("div");
+    card.className = "run";
+
+    const top = document.createElement("div");
+    top.className = "run-top";
+    const dot = document.createElement("div");
+    dot.className = "dot";
+    dot.style.background = face.color;
+    const name = document.createElement("div");
+    name.className = "run-name";
+    name.textContent = `#${run.number} ${run.name}`;
+    const meta = document.createElement("div");
+    meta.className = "run-meta";
+    meta.innerHTML = "";
+    const st = document.createElement("span");
+    st.style.color = face.color;
+    st.textContent = face.text;
+    meta.append(st, document.createTextNode(" · " + when(run.created)));
+    top.append(dot, name, meta);
+    card.append(top);
+
+    if (openRun === run.id) {
+      const detail = document.createElement("div");
+      detail.className = "detail";
+      detail.textContent = "读取中…";
+      card.append(detail);
+      fillDetail(detail, run);
+    }
+
+    card.onclick = () => { openRun = openRun === run.id ? null : run.id; load(); };
+    box.append(card);
+  }
+
+  // 有在跑的就保持轮询，全部跑完就停下来，别白烧请求。
+  if (runs.some((r) => r.status !== "completed")) startPoll(); else stopPoll();
+}
+
+async function fillDetail(host, run) {
+  let data;
+  try {
+    data = await api("/api/detail?run=" + run.id);
+  } catch (e) {
+    host.textContent = e.message === "no_session" ? "" : e.message;
+    return;
+  }
+  host.textContent = "";
+
+  for (const job of data.jobs) {
+    for (const step of job.steps) {
+      // 「Set up job」这类 runner 自带的步骤没有信息量，只留真正的步骤。
+      if (/^(Set up job|Complete job|Post |Checkout|actions\/)/i.test(step.name)) continue;
+      const line = document.createElement("div");
+      line.className = "step";
+      const f = look({ status: step.status, conclusion: step.conclusion });
+      const d = document.createElement("div");
+      d.className = "dot"; d.style.background = f.color;
+      const nm = document.createElement("span");
+      nm.className = "nm"; nm.textContent = step.name;
+      const tail = document.createElement("span");
+      tail.style.marginLeft = "auto"; tail.style.color = f.color; tail.textContent = f.text;
+      line.append(d, nm, tail);
+      host.append(line);
+    }
+  }
+
+  const link = document.createElement("a");
+  link.href = run.html; link.target = "_blank"; link.rel = "noopener noreferrer";
+  link.className = "note";
+  link.style.cssText = "display:inline-block;margin-top:10px;color:var(--dim);text-decoration:underline";
+  link.textContent = "在 GitHub 上看完整日志 →";
+  link.onclick = (e) => e.stopPropagation();
+  host.append(link);
+
+  if (data.artifacts.length) {
+    const arts = document.createElement("div");
+    arts.className = "arts";
+    for (const a of data.artifacts) {
+      const el = document.createElement("a");
+      el.className = "art";
+      el.href = "/api/download?id=" + a.id;
+      el.onclick = (e) => e.stopPropagation();
+      const label = document.createElement("b");
+      label.style.fontWeight = "500";
+      label.textContent = "⬇ " + a.name;
+      const sz = document.createElement("span");
+      sz.textContent = size(a.bytes);
+      el.append(label, sz);
+      arts.append(el);
+    }
+    host.append(arts);
+  } else if (run.status === "completed" && run.conclusion === "success") {
+    const none = document.createElement("div");
+    none.className = "note";
+    none.style.marginTop = "8px";
+    none.textContent = "这次没有成品文件（体检类运行本来就不产出 artifact）。";
+    host.append(none);
+  }
+}
+
+function startPoll() {
+  if (timer) return;
+  $("poll").classList.remove("hidden");
+  timer = setInterval(load, 12000);
+}
+function stopPoll() {
+  clearInterval(timer); timer = null;
+  $("poll").classList.add("hidden");
+}
+
+async function dispatch(workflow, button) {
+  hide($("runMsg"));
+  const all = [$("gen"), $("pre")];
+  all.forEach((b) => (b.disabled = true));
+  try {
+    const payload = { workflow };
+    if (workflow === "generate") {
+      payload.date = $("date").value;
+      payload.brief = $("brief").value;
+      payload.minutes = $("min").value;
+    }
+    await api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload) });
+    show($("runMsg"), workflow === "generate"
+      ? "已提交。整条流水线约 20 分钟，下面的列表会自动刷新。"
+      : "体检已提交，约 30 秒出结果。", "ok");
+    // 新 run 要一两秒才出现在 API 里，等一下再拉。
+    setTimeout(load, 2500);
+    startPoll();
+  } catch (e) {
+    if (e.message !== "no_session") show($("runMsg"), e.message, "bad");
+  } finally {
+    all.forEach((b) => (b.disabled = false));
+  }
+}
+
+$("go").onclick = login;
+for (const id of ["user", "pw"]) $(id).onkeydown = (e) => { if (e.key === "Enter") login(); };
+$("gen").onclick = () => dispatch("generate");
+$("pre").onclick = () => dispatch("preflight");
+$("refresh").onclick = load;
+$("out").onclick = async () => {
+  await fetch("/api/login", { method: "DELETE", credentials: "same-origin" }).catch(() => {});
+  toGate("");
+};
+
+// 带着有效 cookie 刷新页面时直接进控制台，不用再输一次口令。
+//
+// 这里故意**不走 api()**：api() 遇 401 会喊「会话过期，请重新登录」，而首次访问
+// 本来就没有会话，401 是正常的 —— 走 api() 会让第一次来的人看到一句像出错的提示。
+(async () => {
+  try {
+    const r = await fetch("/api/runs", { credentials: "same-origin" });
+    if (!r.ok) return;                       // 包括 401：安静停在口令页
+    $("gate").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    await load();
+    startPoll();
+  } catch { /* 网络不通也停在口令页 */ }
+})();
+</script>
+</body>
+</html>

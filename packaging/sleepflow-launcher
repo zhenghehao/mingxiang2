@@ -8,13 +8,23 @@ log_file="${data_dir}/server.log"
 pid_file="${data_dir}/server.pid"
 agnes_log_file="${data_dir}/agnes.log"
 agnes_pid_file="${data_dir}/agnes.pid"
-url="http://127.0.0.1:4319/"
 agnes_url="http://127.0.0.1:8899/bridge/health"
 
 if [[ ! -f "$config_file" ]]; then
   /usr/bin/osascript -e 'display alert "请先安装眠屿工作台" message "请打开安装包，双击“安装眠屿工作台.command”，完成后再启动应用。" as critical'
   exit 1
 fi
+
+# 端口只有一个来源：config.json 的 app.port。不要写死 —— 写死的值一旦和
+# 配置里的不一致，下面的探测就永远超时，服务其实起来了，用户看到的却是
+# 「没有成功启动」。
+port="$("$resource_dir/runtime/node" -e '
+  const fs = require("node:fs");
+  try { process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).app?.port || 4318)); }
+  catch { process.stdout.write("4318"); }
+' "$config_file" 2>/dev/null)"
+[[ -n "$port" ]] || port=4318
+url="http://127.0.0.1:${port}/"
 
 /bin/mkdir -p "$data_dir"
 

@@ -15,12 +15,22 @@ outputs/*
 迁移包-*.sha256
 
 # 内嵌 Python 运行时：4900+ 个文件，是 uv 装出来的，克隆后重装即可
+# 重装：cd extensions/draft-publisher/app && uv sync --extra web
 extensions/draft-publisher/runtime/
 extensions/draft-publisher/**/.venv*/
 extensions/draft-publisher/**/__pycache__/
 extensions/draft-publisher/**/.uv-cache/
+# uv sync 会就地 build 这个包，产出的元数据目录没必要进仓库
+extensions/draft-publisher/**/*.egg-info/
 # 平台登录 cookie —— 绝对不能进仓库
 extensions/draft-publisher/app/cookiesFile/
 extensions/draft-publisher/app/.publisher_data/
 # 跑过的任务记录，只对当时那台机器有意义
 work/draft-jobs/
+
+# Vercel 控制台：真实账号口令和 token 只放本机这个文件，永不进仓库
+web-console/.env.local
+web-console/.vercel/
+
+# Claude Code 的本机权限白名单，只对这台机器有意义
+.claude/settings.local.json

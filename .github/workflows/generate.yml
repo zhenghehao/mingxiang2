@@ -63,9 +63,11 @@ jobs:
           MEDITATION_VIDEO_ROOT: assets/video
           MEDITATION_COVER_DIR: output/_covers
           AGNES_HEADLESS_ENABLED: "true"
-          # 换到 apihub 这一套：key、地址、模型名三样绑定，必须一起换。
-          # 官方直连 api.agnes-ai.cn 在 runner 上一直 401，先试这条路。
-          AGNES_BASE_URL: https://apihub.agnes-ai.cn
+          # runner 在海外，必须走国际站镜像 .com；default-config 里的 .cn 是给
+          # 国内本机用的。两个镜像同一批令牌、同一套模型名，只差域名，用错地区
+          # 会一直 401。填不带 /v1 的 origin，src/agnes-headless.mjs 自己拼路径。
+          # 文档：https://wiki.agnes-ai.com/zh-Hans/docs/overview
+          AGNES_BASE_URL: https://apihub.agnes-ai.com
           AGNES_TEXT_MODEL: agnes-2.0-flash
           AGNES_IMAGE_MODEL: agnes-image-2.0-flash
           AGNES_OUTPUT_DIR: output/_agnes

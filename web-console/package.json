@@ -1,0 +1,10 @@
+{
+  "name": "mingxiang-web-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "线上控制台：口令门 + 触发 GitHub Actions + 看状态 + 下载成品。不跑流水线本身。",
+  "engines": {
+    "node": ">=22"
+  }
+}

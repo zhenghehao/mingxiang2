@@ -1033,11 +1033,19 @@ server.listen(config.app.port, "127.0.0.1", () => {
   // 这三样是绑定的：baseUrl、model、密钥。换供应商要一起换，只改一样就会
   // 401（地址换了 key 没换）或 404（key 换了模型名没换），而报错本身看不出
   // 是配错了。启动时先摊开，配错一眼就能发现。
-  const textKeySource = process.env[config.textProvider.apiKeyEnv]
-    ? `环境变量 ${config.textProvider.apiKeyEnv}`
-    : "macOS 钥匙串";
-  console.log(`  文本模型：${config.textProvider.model} @ ${new URL(config.textProvider.baseUrl).host}`
-    + `（密钥来自${textKeySource}）`);
+  // 密钥来源只有两处：环境变量，或钥匙串。两处都要真查 —— 只要有一处是
+  // 「猜」的，一台什么都没配的机器就会打出一行看着像配好了的日志，
+  // 直到跑到选题才 401。查不到就明说没配。
+  textProviderKeyStatus().then(({ configured }) => {
+    const source = process.env[config.textProvider.apiKeyEnv]
+      ? `环境变量 ${config.textProvider.apiKeyEnv}`
+      : (configured ? "macOS 钥匙串" : "");
+    console.log(`  文本模型：${config.textProvider.model} @ ${new URL(config.textProvider.baseUrl).host}`
+      + (source ? `（密钥来自${source}）` : ""));
+    if (!source) {
+      console.log(`  提示：未配置文本密钥（环境变量 ${config.textProvider.apiKeyEnv} 或 macOS 钥匙串），选题和文稿会报错`);
+    }
+  }).catch(() => {});
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

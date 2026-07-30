@@ -6,20 +6,26 @@
  * 密钥本身不能打印，但**长度、数量、首尾各 4 位**足以认出是不是同一批，
  * 又不至于泄露。再对每批做一次最小请求，把 HTTP 状态摊开。
  */
+// Agnes 的端点和模型名从应用真正读的那份配置里取：default-config ← 环境变量。
+// 不在这里写死 —— 体检必须打和应用完全相同的端点和模型，否则换端点后
+// 两边一漂移，体检结果就变成假信号，比不体检更糟。
+const { readFile } = await import("node:fs/promises");
+const dflt = JSON.parse(await readFile(new URL("../data/default-config.json", import.meta.url), "utf8"));
+const agnesBase = process.env.AGNES_BASE_URL || dflt.agnesHeadless?.baseUrl || "https://apihub.agnes-ai.cn";
+const agnesModel = process.env.AGNES_TEXT_MODEL || dflt.agnesHeadless?.textModel || "agnes-2.0-flash";
+
 const GROUPS = [
   ["TEXT_API_KEY", "https://api.deepseek.com/chat/completions", "deepseek-v4-flash"],
   ["SENSENOVA_API_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
   ["SENSENOVA_SCORER_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
   ["SENSENOVA_MOTION_KEYS", "https://token.sensenova.cn/v1/chat/completions", "sensenova-6.7-flash-lite"],
-  ["AGNES_API_KEYS", "https://api.agnes-ai.cn/v1/chat/completions", "agnes-2.5-flash"],
-  // 备选入口：另一批令牌、另一代模型。CI 上官方直连 401 时，
-  // 用它判断是「这批 key 不行」还是「Agnes 整体不收这个来源」——
-  // 两个端点都 401 就是后者，换端点也没用。
-  ["AGNES_HUB_KEYS", "https://apihub.agnes-ai.cn/v1/chat/completions", "agnes-2.0-flash"]
+  ["AGNES_API_KEYS", `${agnesBase}/v1/chat/completions`, agnesModel]
 ];
 
 const split = (raw) => [...new Set(String(raw || "").split(/[,、，;；\s]+/).map((s) => s.trim()).filter(Boolean))];
 const mask = (k) => `${k.slice(0, 6)}…${k.slice(-4)}(${k.length}位)`;
+
+console.log(`Agnes 端点 ${agnesBase} · 模型 ${agnesModel}（跟随 default-config，可用环境变量覆盖）\n`);
 
 for (const [name, url, model] of GROUPS) {
   const keys = split(process.env[name]);

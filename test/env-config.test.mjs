@@ -147,9 +147,11 @@ test("默认配置的音色和混音参数要和本机一致 —— CI 出的片
   const { readFile } = await import("node:fs/promises");
   const url = (name) => new URL(`../data/${name}`, import.meta.url);
   const dflt = JSON.parse(await readFile(url("default-config.json"), "utf8"));
-  const local = JSON.parse(await readFile(url("config.json"), "utf8")).minimax ? JSON.parse(await readFile(url("config.json"), "utf8")) : null;
+  // config.json 不进仓库（含密钥和绝对路径），所以新克隆和 CI 上都读不到。
+  // 读失败要当成「没有本机配置」，不能当成测试失败 —— 否则一 clone 就红。
+  const local = await readFile(url("config.json"), "utf8").then(JSON.parse).catch(() => null);
   assert.ok(dflt.minimax.voiceId, "voiceId 不能为空，否则 MiniMax 直接报错");
-  if (!local) return; // 别人克隆时没有 config.json，跳过对比
+  if (!local?.minimax) return; // 别人克隆时没有 config.json，跳过对比
   for (const key of ["voiceId", "model", "speed", "emotion", "pitch", "volume"]) {
     assert.equal(dflt.minimax[key], local.minimax[key], `minimax.${key} 两边应一致`);
   }

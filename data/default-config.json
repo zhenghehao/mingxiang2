@@ -80,7 +80,7 @@
     "enabled": false,
     "_说明": "开启后视觉这一步不再依赖 agnes-playground 页面，直接在服务里调 API 跑完六步。关掉就退回浏览器版。",
     "baseUrl": "https://apihub.agnes-ai.cn",
-    "_baseUrl说明": "2026-07-29 服务从 .com 迁到 .cn，旧域名已失效。文档上的 api.agnes-ai.cn 是官方直连 API，与 apihub 聚合网关不是一套令牌，别混用。",
+    "_baseUrl说明": "要走 apihub 聚合网关，不是 api.* 官方直连（两者不是一套令牌）。apihub 有两个地区镜像，按运行环境选：本机在国内用 apihub.agnes-ai.cn，GitHub Actions 的 runner 在海外必须用 apihub.agnes-ai.com（靠 workflow 里的 AGNES_BASE_URL 覆盖）。两个镜像同为 OpenAI 兼容、同样的 /v1 路径、同一批令牌、同一套模型名，只差域名；用错地区的那个会一直 401。文档 https://wiki.agnes-ai.com/zh-Hans/docs/overview",
     "apiKeys": [],
     "_apiKeys说明": "主池：提示词 / 生图 / 生视频。至少 1 个。",
     "videoKeys": [],
