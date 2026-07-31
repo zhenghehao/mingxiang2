@@ -122,9 +122,20 @@
         </div>
       </div>
       <div id="runMsg" class="msg hidden"></div>
+
+      <div id="autoBox" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="font-size:14px;font-weight:500">自动生成 <span id="autoState" style="color:var(--dim2);font-weight:400">读取中…</span></div>
+          <div id="autoTip" style="font-size:12px;color:var(--run);margin-top:3px;min-height:17px"></div>
+          <div class="note" style="margin-top:2px">每 2 小时一集（约 12 集/天）。关掉后定时触发直接跳过，不消耗额度。时间由 GitHub 调度，可能延迟几分钟。</div>
+        </div>
+        <button id="autoBtn" class="ghost" disabled>…</button>
+      </div>
+      <div id="autoMsg" class="msg hidden"></div>
+
       <div class="note" style="margin-top:14px">
         <strong>体检</strong>约 30 秒，只验证各家密钥在 runner 上能不能用，几乎不耗额度 —— 第一次用、或改过 Secrets 之后先跑这条。<br>
-        <strong>生成一集</strong>约 20 分钟，会真实消耗 API 额度。成品是 artifact，存 90 天。<br>
+        <strong>生成一集</strong>实测约 10 分钟，会真实消耗 API 额度。成品是一个 zip（音频＋视频＋双封面＋四份文本），约 34MB，存 90 天。<br>
         七平台草稿<strong>不在</strong>线上：那需要真实浏览器登录态和扫码，只能在你自己的机器上做。
       </div>
     </div>
@@ -182,6 +193,7 @@ async function login() {
     $("gate").classList.add("hidden");
     $("app").classList.remove("hidden");
     await load();
+    loadAuto();
     startPoll();
   } catch (e) {
     show($("gateMsg"), e.message, "bad");
@@ -270,7 +282,10 @@ async function load() {
   }
 
   // 有在跑的就保持轮询，全部跑完就停下来，别白烧请求。
-  if (runs.some((r) => r.status !== "completed")) startPoll(); else stopPoll();
+  running = runs.some((r) => r.status !== "completed");
+  if (running) startPoll(); else stopPoll();
+  // 「这次跑完后停止」和「立即停止」的措辞取决于有没有在跑，所以要跟着刷。
+  paintAuto();
 }
 
 async function fillDetail(host, run) {
@@ -371,6 +386,109 @@ async function dispatch(workflow, button) {
   }
 }
 
+// ── 自动生成开关 ──────────────────────────────────────────────
+// 开关的载体是仓库变量 AUTO_RUN。这里只管显示和翻转，真正的判定在
+// generate.yml 的 job 条件里 —— 关掉时定时触发直接跳过整个 job。
+let autoOn = null;
+let running = false;   // 当前有没有正在跑的运行，由 load() 更新
+
+// 和 generate.yml 里的 cron 保持一致：`0 */2 * * *` ＝ UTC 偶数小时的整点。
+// 改了那边就要改这里，否则倒计时会算错。
+const CRON_EVERY_HOURS = 2;
+
+/** 下一次 cron 敲门的时刻。逐小时前进，直到落在未来且是偶数小时。 */
+function nextCronAt() {
+  const now = new Date();
+  const n = new Date(now);
+  n.setUTCMinutes(0, 0, 0);
+  while (n <= now || n.getUTCHours() % CRON_EVERY_HOURS !== 0) {
+    n.setUTCHours(n.getUTCHours() + 1);
+  }
+  return n;
+}
+
+function countdownText() {
+  const ms = nextCronAt() - Date.now();
+  if (ms <= 0) return "就在这几分钟";
+  const s = Math.floor(ms / 1000);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return hh > 0 ? `${hh} 小时 ${mm} 分` : `${mm} 分 ${String(ss).padStart(2, "0")} 秒`;
+}
+
+function paintAuto() {
+  const state = $("autoState");
+  const btn = $("autoBtn");
+  const tip = $("autoTip");
+
+  if (autoOn === null) {
+    state.textContent = "读取中…";
+    state.style.color = "var(--dim2)";
+    btn.textContent = "…";
+    btn.disabled = true;
+    tip.textContent = "";
+    return;
+  }
+
+  state.textContent = autoOn ? "· 已开启" : "· 已关闭";
+  state.style.color = autoOn ? "var(--ok)" : "var(--dim2)";
+  btn.disabled = false;
+
+  if (!autoOn) {
+    btn.textContent = "开始自动生成";
+    btn.className = "ghost";
+    tip.textContent = "";
+    return;
+  }
+
+  // 开着的时候，按钮的说法要如实：关掉开关**不会**打断正在跑的那一条 ——
+  // job 的 if 条件只在启动时判断一次，已经起跑的不受影响。
+  btn.className = "";
+  btn.textContent = running ? "这次跑完后停止" : "立即停止";
+  tip.textContent = running
+    ? "正在生成中 · 关掉后这次会跑完，之后不再自动开始"
+    : `距下次自动生成预计还有 ${countdownText()}`;
+}
+
+async function loadAuto() {
+  try {
+    const { on } = await api("/api/auto");
+    autoOn = on;
+  } catch (e) {
+    if (e.message !== "no_session") show($("autoMsg"), e.message, "bad");
+    autoOn = null;
+  }
+  paintAuto();
+}
+
+async function toggleAuto() {
+  hide($("autoMsg"));
+  const next = !autoOn;
+  // 开启是会花钱的动作，确认一次。关闭不拦。
+  if (next && !confirm("开启后每 2 小时自动生成一集，会真实消耗 API 额度。\n记得用完回来关掉。\n\n确定开启？")) return;
+  $("autoBtn").disabled = true;
+  try {
+    const { on } = await api("/api/auto", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: next }) });
+    autoOn = on;
+    show($("autoMsg"), on
+      ? `已开启。预计 ${countdownText()} 后开始第一集，跑完会出现在下面的列表里。`
+      : (running
+          ? "已关闭。正在跑的这一集会照常跑完，之后不再自动开始。"
+          : "已关闭。后续的定时触发会直接跳过，不消耗额度。"), on ? "ok" : "info");
+  } catch (e) {
+    if (e.message !== "no_session") show($("autoMsg"), e.message, "bad");
+  }
+  paintAuto();
+}
+
+// 倒计时每秒刷新。只重画那一行文字，不碰按钮状态，避免打断点击。
+setInterval(() => {
+  if (autoOn && !running) $("autoTip").textContent = `距下次自动生成预计还有 ${countdownText()}`;
+}, 1000);
+
+$("autoBtn").onclick = toggleAuto;
 $("go").onclick = login;
 for (const id of ["user", "pw"]) $(id).onkeydown = (e) => { if (e.key === "Enter") login(); };
 $("gen").onclick = () => dispatch("generate");
@@ -392,6 +510,7 @@ $("out").onclick = async () => {
     $("gate").classList.add("hidden");
     $("app").classList.remove("hidden");
     await load();
+    loadAuto();
     startPoll();
   } catch { /* 网络不通也停在口令页 */ }
 })();

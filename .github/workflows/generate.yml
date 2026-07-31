@@ -1,7 +1,5 @@
 name: 生成一集冥想
 
-# 手动触发。定时跑的话在下面加 schedule，但建议先手动跑顺了再说 ——
-# 定时任务失败时没人看日志，白烧额度。
 on:
   workflow_dispatch:
     inputs:
@@ -20,10 +18,29 @@ on:
         required: false
         default: "10"
 
+  # 定时。cron 只负责「按点敲门」，开不开由下面的 AUTO_RUN 变量决定 ——
+  # 这样控制台上的「开始/停止」按钮才是真开关：不用改这个文件就能停。
+  #
+  # 改频率就改这一行（UTC 时间）：
+  #   0 */2 * * *  每 2 小时（约 12 集/天）
+  #   0 */6 * * *  每 6 小时（4 集/天）
+  #   0 13 * * *   每天一次，UTC 13:00 ＝ 北京时间 21:00
+  schedule:
+    - cron: "0 */2 * * *"
+
+# 同一时刻只允许一条在跑。定时和手动撞在一起时，后来的排队而不是并行 ——
+# 两条同时跑会争同一批 API key 的限流窗口，还可能选到同一个题目。
+concurrency:
+  group: generate-meditation
+  cancel-in-progress: false
+
 jobs:
   generate:
     runs-on: ubuntu-latest
-    # 整条流水线实测约 20 分钟；给足余量，卡住时也不会白占 6 小时
+    # 手动触发永远放行；定时触发只在 AUTO_RUN=on 时才跑。
+    # 关掉时这个 job 直接跳过，不占 runner、不消耗任何额度。
+    if: github.event_name == 'workflow_dispatch' || vars.AUTO_RUN == 'on'
+    # 整条流水线实测约 10 分钟；给足余量，卡住时也不会白占 6 小时
     timeout-minutes: 90
 
     steps:
@@ -72,10 +89,20 @@ jobs:
           AGNES_IMAGE_MODEL: agnes-image-2.0-flash
           AGNES_OUTPUT_DIR: output/_agnes
         run: |
+          # 定时触发时 inputs 全是空的（那些字段只属于 workflow_dispatch），
+          # 所以要兜底，否则定时跑会带着空参数进去。
+          BRIEF="${{ inputs.brief }}"
+          if [ -z "$BRIEF" ]; then
+            # 按北京时间分时段：11-17 点出「中午」，其余出「晚上」。
+            # runner 是 UTC，北京时间 = UTC + 8。
+            H=$(( ( $(date -u +%-H) + 8 ) % 24 ))
+            if [ "$H" -ge 11 ] && [ "$H" -lt 17 ]; then BRIEF="中午"; else BRIEF="晚上"; fi
+            echo "定时触发：北京时间 ${H} 点 → 时段「${BRIEF}」"
+          fi
           node scripts/run-once.mjs \
             --date "${{ inputs.date }}" \
-            --brief "${{ inputs.brief }}" \
-            --minutes "${{ inputs.minutes }}"
+            --brief "$BRIEF" \
+            --minutes "${{ inputs.minutes || '10' }}"
 
       # 成品几十上百 MB，走 artifact。默认存 90 天，够你下载了。
       - name: 上传成品
