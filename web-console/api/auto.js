@@ -16,6 +16,22 @@ import { guard, gh, ghFail, repo, body } from "./_lib.js";
 
 const NAME = "AUTO_RUN";
 
+/**
+ * 变量接口的 403 只有一个原因，直接把话说到底。
+ *
+ * 通用的 403 文案会说「需要 actions:write 和 contents:read」—— 那是别处的
+ * 需求，照搬到这里就是把人往错的方向指。读写仓库变量要的是 Variables 权限，
+ * 而且它**不在** Actions 权限里，是单独一项。
+ */
+function needVariables(res) {
+  return res.status(502).json({
+    error: "GitHub 403 · token 缺少 Variables 权限（这一项和 Actions 是分开的）",
+    detail: "GitHub → Settings → Developer settings → Fine-grained tokens → 编辑这个 token"
+      + " → Permissions → Add permissions → 找 Variables → 设成 Read and write → Update。"
+      + "权限在 GitHub 侧即时生效，改完刷新本页即可，不用重新部署 Vercel。"
+  });
+}
+
 export default async function handler(req, res) {
   if (!guard(req, res)) return;
   const target = repo();
@@ -32,6 +48,7 @@ export default async function handler(req, res) {
       res.setHeader("Cache-Control", "no-store");
       return res.status(200).json({ on: false, exists: false });
     }
+    if (r.status === 403) return needVariables(res);
     if (!r.ok) return ghFail(res, r);
     const data = await r.json();
     res.setHeader("Cache-Control", "no-store");
@@ -62,14 +79,7 @@ export default async function handler(req, res) {
 
   // PATCH 成功是 204，POST 创建成功是 201。
   if (r.status !== 204 && r.status !== 201) {
-    // 403 在这里几乎总是同一个原因，直接把话说明白，省得去翻文档。
-    if (r.status === 403) {
-      return res.status(502).json({
-        error: "GitHub 403 · token 缺少 Variables 权限",
-        detail: "去 GitHub → Settings → Developer settings → Fine-grained tokens，"
-          + "给这个 token 补上 Repository permissions → Variables: Read and write，然后 Vercel 重新部署。"
-      });
-    }
+    if (r.status === 403) return needVariables(res);
     return ghFail(res, r);
   }
 

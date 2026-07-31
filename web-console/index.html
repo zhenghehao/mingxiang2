@@ -390,6 +390,7 @@ async function dispatch(workflow, button) {
 // 开关的载体是仓库变量 AUTO_RUN。这里只管显示和翻转，真正的判定在
 // generate.yml 的 job 条件里 —— 关掉时定时触发直接跳过整个 job。
 let autoOn = null;
+let autoLoading = true;  // 区分「还在读」和「读失败了」——两者的按钮完全不同
 let running = false;   // 当前有没有正在跑的运行，由 load() 更新
 
 // 和 generate.yml 里的 cron 保持一致：`0 */2 * * *` ＝ UTC 偶数小时的整点。
@@ -423,10 +424,14 @@ function paintAuto() {
   const tip = $("autoTip");
 
   if (autoOn === null) {
-    state.textContent = "读取中…";
-    state.style.color = "var(--dim2)";
-    btn.textContent = "…";
-    btn.disabled = true;
+    // 读不到状态时**必须留出路**。之前这里把按钮禁用成「…」，一旦读取失败
+    // 就变成一个点不动的死控件，用户连重试都没得点 —— 错误状态不给出路，
+    // 比报错本身更糟。
+    state.textContent = autoLoading ? "读取中…" : "· 读取失败";
+    state.style.color = autoLoading ? "var(--dim2)" : "var(--bad)";
+    btn.textContent = autoLoading ? "…" : "重试";
+    btn.className = "ghost";
+    btn.disabled = autoLoading;
     tip.textContent = "";
     return;
   }
@@ -452,17 +457,23 @@ function paintAuto() {
 }
 
 async function loadAuto() {
+  autoLoading = true;
+  paintAuto();
   try {
     const { on } = await api("/api/auto");
     autoOn = on;
+    hide($("autoMsg"));
   } catch (e) {
     if (e.message !== "no_session") show($("autoMsg"), e.message, "bad");
     autoOn = null;
   }
+  autoLoading = false;
   paintAuto();
 }
 
 async function toggleAuto() {
+  // 读取失败时这个按钮是「重试」，点它就重新读一次，而不是去翻转一个未知状态。
+  if (autoOn === null) return loadAuto();
   hide($("autoMsg"));
   const next = !autoOn;
   // 开启是会花钱的动作，确认一次。关闭不拦。
