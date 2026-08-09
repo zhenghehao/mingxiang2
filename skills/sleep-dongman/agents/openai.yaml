@@ -1,0 +1,4 @@
+interface:
+  display_name: "动漫影视氛围助眠文稿"
+  short_description: "专门创作可直接口播的动漫影视氛围与夜行旅程类中文助眠文稿"
+  default_prompt: "使用 $sleep-dongman 创作一篇雨夜车厢主题的中文助眠文稿。"

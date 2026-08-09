@@ -1,0 +1,4 @@
+interface:
+  display_name: "自然梦境场景助眠文稿"
+  short_description: "专门创作可直接口播的自然场景与原创梦境漫游类中文助眠文稿"
+  default_prompt: "使用 $sleep-nature-scene 创作一篇雨后森林主题的中文助眠文稿。"

@@ -91,10 +91,14 @@ export async function readSkillById(roots, idOrName) {
   return { ...skill, content: await readFile(skill.file, "utf8") };
 }
 
-export async function resolveSlots(config) {
+export async function resolveSlots(config, { picked = {} } = {}) {
   const entries = await Promise.all(Object.entries(config.slots || {}).map(async ([slot, id]) => {
-    if (!id) return [slot, null];
-    return [slot, await readSkillById(config.skillRoots, id)];
+    // 槽位写成数组＝这一步在多个 Skill 之间轮动（见 skill-rotation.mjs）。
+    // 挑哪个由调用方决定后经 picked 传进来；没传就退回数组第一个，
+    // 这样「只想看看槽位解析对不对」的调用方不会莫名其妙拿到 null。
+    const chosen = picked[slot] || (Array.isArray(id) ? id[0] : id);
+    if (!chosen) return [slot, null];
+    return [slot, await readSkillById(config.skillRoots, chosen)];
   }));
   return Object.fromEntries(entries);
 }
