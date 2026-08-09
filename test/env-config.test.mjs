@@ -151,11 +151,15 @@ test("默认配置的音色和混音参数要和本机一致 —— CI 出的片
   // 读失败要当成「没有本机配置」，不能当成测试失败 —— 否则一 clone 就红。
   const local = await readFile(url("config.json"), "utf8").then(JSON.parse).catch(() => null);
   assert.ok(dflt.minimax.voiceId, "voiceId 不能为空，否则 MiniMax 直接报错");
-  if (!local?.minimax) return; // 别人克隆时没有 config.json，跳过对比
-  for (const key of ["voiceId", "model", "speed", "emotion", "pitch", "volume"]) {
-    assert.equal(dflt.minimax[key], local.minimax[key], `minimax.${key} 两边应一致`);
-  }
-  for (const key of ["introSeconds", "fadeSeconds", "bgmGainDb"]) {
-    assert.equal(dflt.media[key], local.media[key], `media.${key} 影响成品听感，两边应一致`);
-  }
+  // config.json 是**局部覆盖**，不是完整配置 —— 只写端口、只写 deliveryMode 都是常态。
+  // 所以只比对本机真正写了的键：没写的走继承，本来就一致，拿 undefined 去比会把
+  // 「合法的局部覆盖」误判成「两边不一致」。
+  const compare = (base, over, keys, label) => {
+    for (const key of keys) {
+      if (over?.[key] === undefined) continue;
+      assert.equal(base[key], over[key], `${label}.${key} 被本机改成了不同的值，CI 出的片会是另一个味道`);
+    }
+  };
+  compare(dflt.minimax, local?.minimax, ["voiceId", "model", "speed", "emotion", "pitch", "volume"], "minimax");
+  compare(dflt.media, local?.media, ["introSeconds", "fadeSeconds", "bgmGainDb"], "media");
 });

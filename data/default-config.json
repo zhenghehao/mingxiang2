@@ -30,17 +30,17 @@
     "model": "deepseek-v4-pro",
     "stageModels": {
       "topic": "deepseek-v4-flash",
-      "script": "",
-      "tts": "",
+      "script": "deepseek-v4-flash",
+      "tts": "deepseek-v4-flash",
       "copy": "deepseek-v4-flash"
     },
-    "_stageModels说明": "四步各用什么模型。留空＝用上面的 model。原稿(script)和配音文本(tts)是创作，用 pro；选题(topic)和发布文案(copy)用 flash 省钱。注意：实测 flash 在 copy 这步偶尔会让两个平台标题重复，且不报错。",
+    "_stageModels说明": "四步各用什么模型。留空＝用上面的 model。2026-08-09 起四步全用 flash（原来 02/03 留空吃默认的 pro）。baseUrl 和密钥不变，只换模型名。注意：实测 flash 在 copy 这步偶尔会让两个平台标题重复，且不报错。",
     "apiKeyEnv": "TEXT_API_KEY",
     "temperature": 0.7
   },
   "minimax": {
     "deliveryMode": "api",
-    "_deliveryMode说明": "api＝按量付费（读 MINIMAX_API_KEY）；subscription＝资源包（读 MINIMAX_SUBSCRIPTION_KEY）。2026-08-09 订阅到期，切到按量。",
+    "_deliveryMode说明": "api＝按量付费（读 MINIMAX_API_KEY）；subscription＝资源包（读 MINIMAX_SUBSCRIPTION_KEY）。2026-08-09 订阅到期切到按量：实测每篇约 1500 字符，每天 3 篇也只 13 万字符/月，而最小资源包是 200 万字符 ¥630/月，按量 speech-2.8-hd 才 ¥3.5/万字符 —— 这个量级订阅贵十倍以上。",
     "baseUrl": "https://api.minimaxi.com/v1/t2a_v2",
     "apiKeyEnv": "MINIMAX_API_KEY",
     "subscriptionApiKeyEnv": "MINIMAX_SUBSCRIPTION_KEY",

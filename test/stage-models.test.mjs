@@ -54,20 +54,25 @@ test("继承 baseUrl、温度和鉴权方式，只换模型名", () => {
   assert.equal(out.topic.authPrefix, "");
 });
 
-test("实际配置文件里的分工就是 02/03 用 pro、01/04 用 flash", async (t) => {
-  // 这条校验的是**本机**的 config.json，而它不进仓库（含密钥和绝对路径）。
-  // 新克隆和 CI 上没有这个文件，只能跳过 —— 不是代码坏了。
-  const config = await readFile(new URL("../data/config.json", import.meta.url), "utf8")
-    .then(JSON.parse)
-    .catch(() => null);
-  if (!config) {
-    t.skip("本机没有 data/config.json，跳过实配校验");
-    return;
-  }
+test("实际生效的分工是四步全用 flash", async (t) => {
+  // 量的是**合并后**的配置（default-config ← config.json），因为那才是真正跑的东西。
+  //
+  // 原来这条只读 config.json，于是有两个毛病：新克隆和 CI 上没这个文件就整条跳过，
+  // 白白失去保护；而本机一旦存在一份只写了局部覆盖的 config.json（比如只改端口），
+  // 它又会拿这份残缺配置去查 textProvider，查不到就报假失败。
+  const defaults = JSON.parse(await readFile(new URL("../data/default-config.json", import.meta.url), "utf8"));
+  const user = await readFile(new URL("../data/config.json", import.meta.url), "utf8")
+    .then(JSON.parse).catch(() => ({}));
+  const { deepMerge } = await import("../src/json-store.mjs");
+  const config = deepMerge(defaults, user);
+
   const out = buildStageProviders(config);
-  assert.equal(out.topic?.model, "deepseek-v4-flash", "01 选题应该用 flash");
-  assert.equal(out.copy?.model, "deepseek-v4-flash", "04 发布文案应该用 flash");
-  assert.equal(out.script, undefined, "02 原稿应该落回默认的 pro");
-  assert.equal(out.tts, undefined, "03 配音文本应该落回默认的 pro");
-  assert.equal(config.textProvider.model, "deepseek-v4-pro");
+  // 2026-08-09：02/03 从「留空吃默认 pro」改成显式 flash，URL 和密钥不变。
+  for (const stage of ["topic", "script", "tts", "copy"]) {
+    assert.equal(out[stage]?.model, "deepseek-v4-flash", `${stage} 应该用 flash`);
+  }
+  // 分步覆盖只该换模型名：端点仍是同一个，密钥压根不在这一层（全局 apiKeyEnv 决定）。
+  for (const stage of ["topic", "script", "tts", "copy"]) {
+    assert.equal(out[stage]?.endpoint, config.textProvider.baseUrl, `${stage} 不该改端点`);
+  }
 });
