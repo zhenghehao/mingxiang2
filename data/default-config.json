@@ -39,7 +39,8 @@
     "temperature": 0.7
   },
   "minimax": {
-    "deliveryMode": "subscription",
+    "deliveryMode": "api",
+    "_deliveryMode说明": "api＝按量付费（读 MINIMAX_API_KEY）；subscription＝资源包（读 MINIMAX_SUBSCRIPTION_KEY）。2026-08-09 订阅到期，切到按量。",
     "baseUrl": "https://api.minimaxi.com/v1/t2a_v2",
     "apiKeyEnv": "MINIMAX_API_KEY",
     "subscriptionApiKeyEnv": "MINIMAX_SUBSCRIPTION_KEY",
