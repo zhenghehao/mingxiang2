@@ -3,10 +3,83 @@ import assert from "node:assert/strict";
 import {
   analyzeTtsPacing,
   formatPublishingContext,
+  resolveDurationPlan,
   resolveExtremeDurationPlan,
   sanitizeTtsText,
+  TTS_DRIFT_TOLERANCE,
+  ttsContentDrift,
   ttsPacingNeedsRetry
 } from "../src/workflow.mjs";
+
+// ── 篇幅是单边约束：够长就行，超了不管 ──────────────────────────────────
+test("时长标尺只设下限，上限不作判定", () => {
+  const plan = resolveDurationPlan(10);
+  assert.equal(plan.minChars, 470, "下限＝targetChars 减 12%");
+  assert.equal(plan.targetChars, 534);
+  assert.equal(plan.floorOnly, true, "要显式标出这是单边约束，否则调用方会当区间判，写长了被误杀");
+});
+
+test("写超了放行，写短了才拦", () => {
+  const { minChars } = resolveDurationPlan(10);
+  // 实测三轮 482 / 511 / 502 字全部合格，出来却是 12.5 / 8.9 / 14.1 分钟 ——
+  // 时长真正取决于停顿总量（507 / 276 / 558 秒），字数这把尺子只该管「别太短」。
+  for (const chars of [470, 534, 900, 5000]) {
+    assert.ok(chars >= minChars, `${chars} 字应当放行`);
+  }
+  assert.ok(469 < minChars, "差一个字也算不够");
+});
+
+test("各档下限随分钟数线性走，且都比中心值低 12%", () => {
+  for (const minutes of [3, 10, 15, 20]) {
+    const p = resolveDurationPlan(minutes);
+    assert.equal(p.minChars, p.targetChars - Math.round(p.targetChars * 0.12));
+    assert.ok(p.minChars < p.targetChars);
+  }
+});
+
+// ── 转写的职责边界：只插停顿，不动内容 ──────────────────────────────────
+//
+// 下面几条用的是 work/runs 里 8 条真实记录的字数。守规矩的三条漂移正好 0.0%，
+// 越权的三条是 10.8% / 12.5% / 25.8% —— 阈值必须把这两类分开。
+const 原稿 = (n) => "字".repeat(n);
+
+test("转写只插停顿标记时，漂移为 0", () => {
+  const script = 原稿(586);
+  const optimized = "字<#3.5#>".repeat(586);
+  assert.equal(ttsContentDrift(script, optimized), 0);
+  assert.ok(ttsContentDrift(script, optimized) <= TTS_DRIFT_TOLERANCE);
+});
+
+test("真实的三条守规矩记录都在容忍度内", () => {
+  for (const chars of [572, 586, 655]) {
+    assert.ok(ttsContentDrift(原稿(chars), 原稿(chars)) <= TTS_DRIFT_TOLERANCE);
+  }
+});
+
+test("真实的三条越权记录都会被抓出来", () => {
+  // 629→697 扩写、502→565 扩写、287→213 删内容。
+  // 最后一条在旧口径（落没落进时长区间）下反而算合格 —— 砍完正好落进 170–216，
+  // 这正是把篇幅考卷发给转写去做的后果，新口径必须能看见它。
+  for (const [script, optimized] of [[629, 697], [502, 565], [287, 213]]) {
+    assert.ok(
+      ttsContentDrift(原稿(script), 原稿(optimized)) > TTS_DRIFT_TOLERANCE,
+      `${script}→${optimized} 应当被判为越权`
+    );
+  }
+});
+
+test("英文标签转成中文带来的增量不会误判为越权", () => {
+  // (inhale) 是 0 个中文字，轻轻吸气是 4 个 —— 这是转写的分内事，不该报警。
+  const script = 原稿(500) + "(inhale)(exhale)(breath)";
+  const optimized = 原稿(500) + "轻轻吸气缓缓呼气自然换气";
+  assert.ok(ttsContentDrift(script, optimized) <= TTS_DRIFT_TOLERANCE);
+});
+
+test("原稿为空时漂移算 0，不当成异常", () => {
+  // 复用配音文本重跑时原稿可能拿不到，这时无从比较，不能凭空报警。
+  assert.equal(ttsContentDrift("", 原稿(500)), 0);
+  assert.equal(ttsContentDrift(null, "随便什么"), 0);
+});
 
 test("MiniMax 配音文本会把英文呼吸动作标签转换成中文", () => {
   const input = "慢慢地，(inhale)<#4.0#>清凉的空气进入胸口。(EXHALE)<#5.0#>疲惫流走。";

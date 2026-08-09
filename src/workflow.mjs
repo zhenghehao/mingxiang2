@@ -9,6 +9,7 @@ import {
 import { agnesHeadlessEnabled, generateAgnesVisualsHeadless } from "./agnes-headless.mjs";
 import { callTextEngine, synthesizeMinimax } from "./providers.mjs";
 import { resolveSlots } from "./skills.mjs";
+import { loadSkillHistory, pickNextSkill, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
 import {
   CancelledError, probeDuration, renderAudio, renderVideo, resolveMediaBinary, resolveVideoProfile, selectDatedAsset
 } from "./media.mjs";
@@ -60,6 +61,23 @@ export function analyzeTtsPacing(value) {
 
 function countHanCharacters(value) {
   return (String(value || "").match(/\p{Script=Han}/gu) || []).length;
+}
+
+/**
+ * 转写允许的字数漂移上限。
+ *
+ * 理论值是 0 —— 插停顿标记不该动到任何一个中文字。留 3% 是因为把英文动作标签
+ * 换成中文（(inhale) → 轻轻吸气）会真的多出中文字，那是这一步的分内事。
+ * 8 条历史记录里守规矩的三条漂移都是 0.0%，越权的三条是 10.8% / 12.5% / 25.8%，
+ * 3% 这条线把两类清楚地分开，且不会误伤标签转换。
+ */
+export const TTS_DRIFT_TOLERANCE = 0.03;
+
+/** 配音文本相对原稿的中文字漂移比例。原稿为空时返回 0（无从比较，不当作异常）。 */
+export function ttsContentDrift(script, optimized) {
+  const scriptChars = countHanCharacters(script);
+  if (!scriptChars) return 0;
+  return Math.abs(countHanCharacters(optimized) - scriptChars) / scriptChars;
 }
 
 export function ttsPacingNeedsRetry(stats, mode = "natural") {
@@ -131,8 +149,13 @@ function withTimeout(promise, ms, message) {
  *   10 分钟 → 534 字 ／ 15 分钟 → 778 字 ／ 20 分钟 → 1021 字
  * 拟合出「字数 ≈ 48.7 × 分钟 + 47」，三个点都能对上。
  *
- * 上下浮动取 ±12%：用户要的是「10 分钟左右」而不是卡死到秒，
- * 留余量让文稿自然收尾，而不是为了凑字数硬截断。
+ * **约束是单边的：够长就行，超了不管。**
+ * 助眠成品长了只是听众早睡着了，短了却是实打实的缺斤少两 —— 用户点了 10 分钟
+ * 却只播 7 分钟，是要被投诉的。所以下限 targetChars−12% 是硬线，上限不设。
+ *
+ * maxChars 仍然保留：它是给提示词当「中心参考」用的，不作为判定条件。
+ * 实测三轮 482/511/502 字全部合格，出来却是 12.5/8.9/14.1 分钟 —— 因为真正
+ * 决定时长的是停顿总量（507/276/558 秒），字数只管下限，管不了上限。
  */
 export function resolveDurationPlan(minutes) {
   const raw = Number(minutes);
@@ -145,6 +168,7 @@ export function resolveDurationPlan(minutes) {
     targetChars,
     minChars: targetChars - band,
     maxChars: targetChars + band,
+    floorOnly: true,
     flexible: true
   };
 }
@@ -395,7 +419,7 @@ function buildStageProviders(config) {
   return out;
 }
 
-export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], stages = null, reuse = null } = {}) {
+export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], skillHistory = [], stages = null, reuse = null } = {}) {
   const want = (stage) => !stages || stages.includes(stage);
   const { brief, date } = input;
   // 四步可以各用各的模型：config.textProvider.stageModels 里给哪一步写了模型名，
@@ -404,9 +428,23 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   const providers = { ...buildStageProviders(config), ...(input.providers || {}) };
   const period = /中午|午休|午间/.test(String(brief || "")) ? "中午" : "晚上";
   const engineMode = String(input?.textEngine?.mode || config?.textEngine?.mode || "api");
-  const slots = await resolveSlots(config);
+  // 写稿槽位可以配成一串 Skill，每次挑最久没用的那个 —— 六个文体轮着来，
+  // 频道才不会听起来永远是同一篇。配成单个字符串时池子只有一个元素，行为不变。
+  const scriptPool = scriptSkillPool(config.slots);
+  const pickedScript = input.scriptSkill || pickNextSkill(scriptPool, skillHistory);
+  const slots = await resolveSlots(config, { picked: { script: pickedScript } });
   for (const required of ["topic", "script"]) {
     if (!slots[required]) throw new Error(`请先为“${SLOT_LABELS[required]}”绑定 Skill`);
+  }
+  if (scriptPool.length > 1 && want("script")) {
+    // 这里还没到 progress 那个包装函数的定义（它在下面几行），直接用 onProgress。
+    onProgress?.({
+      step: "script",
+      status: "running",
+      progress: 15,
+      message: `本次写稿文体：${slots.script.name}`,
+      detail: `${scriptPool.length} 个文体轮动 · 最久未用的优先`
+    });
   }
   // 时长优先用界面显式传入的分钟数；没传就按默认 10 分钟。
   // （旧逻辑只在绑定 extreme-immersion 这个 TTS Skill 时才生效，而且靠正则
@@ -415,9 +453,9 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
     resolveDurationPlan(input.durationMinutes ?? DEFAULT_DURATION_MINUTES)
     || resolveExtremeDurationPlan(brief, slots.ttsOptimizer?.name);
   const lengthPrinciple = durationPlan
-    ? `目标成品约 ${durationPlan.minutes} 分钟：正文只统计中文字，以 ${durationPlan.targetChars} 字为中心，控制在 ${durationPlan.minChars}–${durationPlan.maxChars} 字；在范围内完成自然结构和结尾，不要机械截断或凑字。`
+    ? `目标成品约 ${durationPlan.minutes} 分钟：正文只统计中文字，**不得少于 ${durationPlan.minChars} 字**，以 ${durationPlan.targetChars} 字为中心；写长了没关系，宁可长一点也不要短。不要为了凑字数填充空话，也不要为了收尾而机械截断`
     : "结构完整、自然结束，不设字数或分钟目标";
-  const topicRuntime = `${slots.topic.content}\n\n# 本地应用自动运行约定\n当前由无人值守工作流调用。不要向用户提问，也不要等待用户选择。应用已扫描本地选题库并在输入中提供完整禁用清单。必须先排除重复，再在内部生成至少 8 个候选并自动选择总分最高的一项。${durationPlan ? `本次成品目标时长约 ${durationPlan.minutes} 分钟，按应用提供的中文字数标尺规划结构。` : "文稿按结构自然完成，不接收成品时长目标。"}不得压缩内容或填充空话。最终严格按 Skill 的唯一输出格式返回一个结果。`;
+  const topicRuntime = `${slots.topic.content}\n\n# 本地应用自动运行约定\n当前由无人值守工作流调用。不要向用户提问，也不要等待用户选择。应用已扫描本地选题库并在输入中提供完整禁用清单。必须先排除重复，再在内部生成至少 8 个候选并自动选择总分最高的一项。${durationPlan ? `本次成品目标时长约 ${durationPlan.minutes} 分钟（正文不少于 ${durationPlan.minChars} 个中文字，宁长勿短），请挑选内容撑得住这个篇幅的选题。` : "文稿按结构自然完成，不接收成品时长目标。"}不得压缩内容或填充空话。最终严格按 Skill 的唯一输出格式返回一个结果。`;
   const runs = [];
   const progress = (event) => onProgress?.(event);
   const stageProgress = {
@@ -493,16 +531,63 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
       ? `已检查 ${topicHistory.length} 个历史题目 · ${topicRun?.model || topicRun?.engine || "文本引擎"}`
       : "本次重跑不重新选题"
   });
-  const script = want("script")
+  let script = want("script")
     ? await callStage("script", slots.script.content, `日期：${date}\n时段：${period}\n篇幅原则：${lengthPrinciple}。先让结构、呼吸、身体扫描、意象旅程和结尾自然完成；不得填充空话，也不得省略必要段落。\n已自动选择且查重通过的选题：\n${topic}\n\n请完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；中午结尾必须完整唤醒，晚上结尾不得唤醒。`)
     : String(reuse?.script || "");
   if (!want("script")) {
     if (!script) throw new Error("上次的原稿记录为空，无法在复用原稿的前提下重跑");
     progress({ step: "script", status: "done", progress: 36, message: "复用上次原稿" });
   }
+  // 篇幅是**原稿**这一步的责任，就在这里收。
+  //
+  // 以前这道闸设在转写那边：原稿写超了没人管，转写为了凑区间去删内容，一篇
+  // 超了 49% 的稿子被砍掉四分之一后「落进区间」，全程零告警（2026-07-30 实测
+  // 287 → 213 字）。责任放错地方，两边都失灵 —— 原稿没人查，转写又被迫干了
+  // 不该它干的活。
+  // 只查下限。写长了不管 —— 助眠成品长了顶多是听众早睡着，短了才是缺斤少两。
+  if (want("script") && durationPlan) {
+    const scriptChars = countHanCharacters(script);
+    if (scriptChars < durationPlan.minChars) {
+      progress({
+        step: "script",
+        status: "running",
+        progress: 30,
+        message: "原稿篇幅不足目标，正在重写",
+        detail: `当前 ${scriptChars} 字 · 下限 ${durationPlan.minChars} 字`
+      });
+      // 和转写那边一样：重写失败就沿用上一版继续跑。已经写出来的稿子是能用的，
+      // 只是长短偏了，不值得把整轮（含选题查重）连坐掉。
+      try {
+        const rewritten = await callStage(
+          "script",
+          slots.script.content,
+          `上一版文稿只有 ${scriptChars} 个中文字，不足 ${durationPlan.minutes} 分钟版的下限 ${durationPlan.minChars} 字。请保持同一选题、同样的结构完整度和结尾属性重写，把内容展开到 ${durationPlan.targetChars} 字上下 —— 写长了没关系，但绝不能再少于 ${durationPlan.minChars} 字。靠把意象、身体扫描和呼吸引导写得更从容来加长，不要填充空话，也不要改变选题。\n日期：${date}\n时段：${period}\n选题：\n${topic}\n\n上一版文稿：\n${script}`
+        );
+        if (rewritten) script = rewritten;
+      } catch (error) {
+        progress({
+          step: "script",
+          status: "running",
+          progress: 32,
+          message: `重写原稿失败，沿用上一版：${error.message}`,
+          detail: `保留 ${scriptChars} 字`
+        });
+      }
+      const finalScriptChars = countHanCharacters(script);
+      if (finalScriptChars < durationPlan.minChars) {
+        progress({
+          step: "script",
+          status: "running",
+          progress: 34,
+          message: `原稿 ${finalScriptChars} 字，仍不足 ${durationPlan.minutes} 分钟档的下限 ${durationPlan.minChars} 字`,
+          detail: "继续生成，成品会短于目标时长"
+        });
+      }
+    }
+  }
   await onPartial?.({ topic, script, engineRuns: runs });
   const optimizerRuntime = slots.ttsOptimizer
-    ? `${slots.ttsOptimizer.content}\n\n# 本地应用输出约定\n本地应用已经负责 MiniMax JSON 请求、voice_setting、audio_setting、curl 与文件保存。当前步骤只负责改写 text 字段。最终只输出加工后的 TTS 纯文本，不输出标题、解释、参数、JSON、curl、代码围栏或预计时长。自然语气与语义留白优先，按内容自然结束。确保所有 <#x#> 标记合法且不连续。禁止输出 (inhale)、(exhale)、(breath)、(sighs)、(humming) 等英文括号动作标签；统一改成“轻轻吸气”“缓缓呼气”“自然换气”等听众应该直接听见的中文提示。禁止用“呼——吸——”等机械拟声。输出前再次扫描并清除所有此类内容。${durationPlan ? `本次为 ${durationPlan.minutes} 分钟校准版，最终 TTS 纯文本的中文字也必须保持在 ${durationPlan.minChars}–${durationPlan.maxChars} 字；只优化停顿和必要的中文呼吸提示，禁止扩写内容。` : ""}`
+    ? `${slots.ttsOptimizer.content}\n\n# 本地应用输出约定\n本地应用已经负责 MiniMax JSON 请求、voice_setting、audio_setting、curl 与文件保存。当前步骤只负责改写 text 字段。最终只输出加工后的 TTS 纯文本，不输出标题、解释、参数、JSON、curl、代码围栏或预计时长。自然语气与语义留白优先，按内容自然结束。确保所有 <#x#> 标记合法且不连续。禁止输出 (inhale)、(exhale)、(breath)、(sighs)、(humming) 等英文括号动作标签；统一改成“轻轻吸气”“缓缓呼气”“自然换气”等听众应该直接听见的中文提示。禁止用“呼——吸——”等机械拟声。输出前再次扫描并清除所有此类内容。篇幅不归这一步管：不要增删改写任何内容，最终中文字数必须与输入文稿一致，只允许插入 <#x#> 停顿标记。需要呼吸提示时，只能改写文稿里已有的句子，不得新增句子来制造停顿点。`
     : null;
   const pacingMode = slots.ttsOptimizer?.name === "minimax-meditation-tts-extreme-immersion" ? "extreme" : "natural";
   let optimized = want("tts")
@@ -511,48 +596,53 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
       : script)
     : sanitizeTtsText(String(reuse?.optimized || ""));
   if (!want("tts") && !optimized) throw new Error("上次的配音文本记录为空，无法在复用配音文本的前提下重跑");
-  if (want("tts") && slots.ttsOptimizer && durationPlan) {
+  // 转写这一步只该往文稿里插停顿标记，中文字数应当纹丝不动。所以这里量的是
+  // **相对原稿的漂移**，而不是「有没有落进时长区间」——后者是原稿的考卷，
+  // 拿它来考转写，等于逼着转写去增删内容凑数。
+  //
+  // 8 条历史记录佐证：转写守规矩时漂移正好 0.0%（572→572 / 586→586 / 655→655），
+  // 它做得到；出事的三条是 +10.8% / +12.5% / −25.8%，全是越权改内容。
+  // 其中 −25.8% 那条（287→213）在旧口径下反而「合格」，因为砍完正好落进区间。
+  if (want("tts") && slots.ttsOptimizer && script) {
+    const scriptChars = countHanCharacters(script);
+    const driftRatio = (text) => ttsContentDrift(script, text);
     const optimizedChars = countHanCharacters(optimized);
-    if (optimizedChars < durationPlan.minChars || optimizedChars > durationPlan.maxChars) {
+    if (driftRatio(optimized) > TTS_DRIFT_TOLERANCE) {
       progress({
         step: "tts",
         status: "running",
         progress: 43,
-        message: "检测到配音优化改变了目标篇幅，正在按实听标尺重新收紧",
-        detail: `当前 ${optimizedChars} 字 · 目标 ${durationPlan.minChars}–${durationPlan.maxChars} 字`
+        message: "配音优化改动了文稿内容，正在重做（这一步只该插停顿）",
+        detail: `原稿 ${scriptChars} 字 → 配音 ${optimizedChars} 字 · 漂移 ${(driftRatio(optimized) * 100).toFixed(1)}%`
       });
-      // 收紧是**优化**，不是必需 —— 上一版已经是可用的配音文本，只是篇幅偏了。
-      // 收紧调用失败（超时、限流、接口抖动）时保留上一版继续跑，
-      // 而不是把整条流程连同已经生成的选题和原稿一起丢掉。
-      // （2026-07-25 实测：收紧调用 180s 超时，导致整轮失败，
-      //   而当时手上那版 1014 字的文本其实完全能用。）
+      // 重做失败就沿用上一版继续跑：手上这版虽然改了内容，但仍是可用的配音文本，
+      // 不值得把整轮（含选题查重、原稿）一起丢掉。
+      // （2026-07-25 实测：这一步 180s 超时导致整轮失败，而当时那版完全能用。）
       try {
         optimized = sanitizeTtsText(await callStage(
           "tts",
           optimizerRuntime,
-          `上一版配音文本有 ${optimizedChars} 个中文字，超出 ${durationPlan.minutes} 分钟版的 ${durationPlan.minChars}–${durationPlan.maxChars} 字范围。请以原稿为准，只插入合法停顿并做最少量呼吸提示，禁止扩写、重复或增加新画面。最终中文字必须落在目标范围，只输出 TTS 纯文本：\n\n${script}`
+          `上一版把文稿从 ${scriptChars} 个中文字改成了 ${optimizedChars} 个，说明增删了内容。这一步不负责篇幅，只负责停顿：请原样保留下面文稿的每一个字，只插入合法的 <#x#> 标记，最终中文字数必须仍是 ${scriptChars}。只输出 TTS 纯文本：\n\n${script}`
         ));
       } catch (error) {
         progress({
           step: "tts",
           status: "running",
           progress: 45,
-          message: `收紧篇幅失败，沿用上一版配音文本：${error.message}`,
-          detail: `保留 ${optimizedChars} 字 · 成品时长会比 ${durationPlan.minutes} 分钟目标略长`
+          message: `重做配音文本失败，沿用上一版：${error.message}`,
+          detail: `保留 ${optimizedChars} 字`
         });
       }
     }
     const finalChars = countHanCharacters(optimized);
-    // 篇幅偏差只是时长不精确，不是不能用。硬性拦截会让整轮白跑，
-    // 而人声、混音、视频这些下游步骤对篇幅并不敏感 —— 记一条警告继续走。
-    if (finalChars < durationPlan.minChars || finalChars > durationPlan.maxChars) {
-      const drift = Math.round(finalChars / 48.7);
+    // 漂移只是内容被动过，音频本身仍能合成。硬拦会让整轮白跑，记一条警告继续走。
+    if (driftRatio(optimized) > TTS_DRIFT_TOLERANCE) {
       progress({
         step: "tts",
         status: "running",
         progress: 46,
-        message: `配音文本 ${finalChars} 字，未落在 ${durationPlan.minutes} 分钟档的 ${durationPlan.minChars}–${durationPlan.maxChars} 字区间`,
-        detail: `按字数推算成品约 ${drift} 分钟，仍继续生成`
+        message: `配音文本仍与原稿相差 ${(driftRatio(optimized) * 100).toFixed(1)}%（原稿 ${scriptChars} 字 → ${finalChars} 字）`,
+        detail: "转写越权改了内容，成品时长会偏离目标，仍继续生成"
       });
     }
   }
@@ -608,6 +698,7 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
     optimized,
     pacing,
     copy,
+    scriptSkill: slots.script?.name || "",
     engineRuns: runs,
     warnings: [
       ...(!slots.ttsOptimizer ? ["未绑定 MiniMax 优化 Skill，本次直接使用写作稿配音。"] : []),
@@ -622,13 +713,16 @@ export async function runAudioOnly(config, input, workspaceRoot, { onProgress } 
   const jobId = `${input.date}-${Date.now()}`;
   const runDir = path.resolve(workspaceRoot, config.app.runRoot, jobId);
   progress({ step: "prepare", status: "running", progress: 1, message: "正在扫描历史选题库并排除重复" });
-  const [topicHistory] = await Promise.all([
+  const [topicHistory, skillHistory] = await Promise.all([
     loadTopicHistory(config, workspaceRoot),
+    loadSkillHistory(config, workspaceRoot),
     mkdir(runDir, { recursive: true })
   ]);
   progress({ step: "prepare", status: "done", progress: 3, message: "历史选题检查完成", detail: `已载入 ${topicHistory.length} 个历史题目` });
 
-  const text = await runTextWorkflow(config, { ...input, skipPublishingCopy: true }, { onProgress, topicHistory });
+  const text = await runTextWorkflow(config, { ...input, skipPublishingCopy: true }, { onProgress, topicHistory, skillHistory });
+  // 轮动台账在文稿写出来之后才记 —— 写稿失败的那次不该占掉一个轮次。
+  if (text.scriptSkill) await recordSkillUse(config, workspaceRoot, text.scriptSkill);
   const selectedTopic = extractTopicRecord(text.topic);
   const base = safeName(input.outputName || selectedTopic?.title || input.date);
   const outputDir = path.resolve(workspaceRoot, config.app.outputRoot, input.date, base);
@@ -838,8 +932,9 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
   const runDir = path.resolve(workspaceRoot, config.app.runRoot, jobId);
   // 把 runId 透给服务端：界面要按它去读 text.json 展示每一步的产物。
   progress({ step: "prepare", status: "running", progress: 1, message: "正在扫描历史选题库并排除重复", runId: jobId });
-  const [topicHistory] = await Promise.all([
+  const [topicHistory, skillHistory] = await Promise.all([
     loadTopicHistory(config, workspaceRoot),
+    loadSkillHistory(config, workspaceRoot),
     mkdir(runDir, { recursive: true })
   ]);
   progress({ step: "prepare", status: "done", progress: 3, message: "历史选题检查完成", detail: `已载入 ${topicHistory.length} 个历史题目` });
@@ -860,10 +955,16 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
     || (reuseWholeText ? priorText : await runTextWorkflow(config, input, {
       onProgress,
       topicHistory,
+      skillHistory,
       stages: plan?.text || null,
       reuse: priorText,
       onPartial: (partial) => writeJson(path.join(runDir, "text.json"), partial).catch(() => {})
     }));
+  // 只有真的新写了稿才记轮次：复用上次文本、或从已有文本续跑的那些情况
+  // 并没有消耗一个文体，记了会把轮动顺序推错。
+  if (!resumeText && !reuseWholeText && text.scriptSkill) {
+    await recordSkillUse(config, workspaceRoot, text.scriptSkill);
+  }
   if (reuseWholeText) {
     for (const [step, message] of [
       ["prepare", "复用上次的选题检查"], ["topic", "复用上次选题"], ["script", "复用上次原稿"],
