@@ -6,6 +6,11 @@ data/asset-history.json
 .env.*
 !.env.example
 work/runs/
+# 成品目录是 output（单数，见 config.app.outputRoot）。原来只写了 outputs（复数），
+# 名字对不上＝形同虚设：跑几条就有上百 MB 的 mp3 和成片等着被提交进来。
+# playwright 那张调试截图是仓库里本来就有的，单独放行。
+output/*
+!output/playwright/
 outputs/*
 !outputs/.gitkeep
 .DS_Store
