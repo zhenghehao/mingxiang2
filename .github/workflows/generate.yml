@@ -65,6 +65,10 @@ jobs:
         env:
           # ── 密钥（仓库 Settings → Secrets and variables → Actions → Secrets）──
           TEXT_API_KEY: ${{ secrets.TEXT_API_KEY }}
+          # MiniMax 两种计费模式各读各的 key，实际用哪个由 config.minimax.deliveryMode
+          # 决定（2026-08-09 订阅到期，已切成 api＝按量付费）。两个都传着，
+          # 将来切回订阅时只改配置、不用动这个文件。
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           MINIMAX_SUBSCRIPTION_KEY: ${{ secrets.MINIMAX_SUBSCRIPTION_KEY }}
           # 封面出图用的 SenseNova
           SENSENOVA_API_KEYS: ${{ secrets.SENSENOVA_API_KEYS }}
