@@ -122,7 +122,18 @@ export async function callCustomTextProvider(provider, instructions, input, opti
     ?? payload?.result
     ?? payload?.content;
   const text = normalizeTextContent(candidate);
-  if (!text) throw new Error("接口已响应，但没有找到文本内容；可在高级设置中填写响应路径");
+  if (!text) {
+    // 「没取到文本」有两种成因，重试价值完全相反，必须分开报：
+    //   1. 信封认得出（choices[0].message 在），只是内容是空的 —— 模型这一次
+    //      没吐东西，属于瞬时故障，重发大概率就好（2026-08-10 实测：六次相同
+    //      调用只有一次这样）。
+    //   2. 整个响应结构不认识 —— 地址或 responsePath 配错了，重发一万次还是错。
+    // 以前两种共用一句话，上层的重试判据没法区分，只能一律不重试。
+    const 信封正常 = payload?.choices?.[0]?.message !== undefined;
+    throw new Error(信封正常
+      ? "接口返回了空内容（choices 在但 content 为空），可能是模型这次没有输出"
+      : "接口已响应，但没有找到文本内容；可在高级设置中填写响应路径");
+  }
   return text;
 }
 

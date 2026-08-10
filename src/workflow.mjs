@@ -9,7 +9,7 @@ import {
 import { agnesHeadlessEnabled, generateAgnesVisualsHeadless } from "./agnes-headless.mjs";
 import { callTextEngine, synthesizeMinimax } from "./providers.mjs";
 import { resolveSlots } from "./skills.mjs";
-import { loadSkillHistory, pickNextSkill, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
+import { loadPhraseHistory, loadSkillHistory, pickNextSkill, pickPhrase, poolFor, recordPhraseUse, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
 import {
   CancelledError, probeDuration, renderAudio, renderVideo, resolveMediaBinary, resolveVideoProfile, selectDatedAsset
 } from "./media.mjs";
@@ -132,6 +132,28 @@ export const RERUN_PLAN = {
   files:  { text: [],                                 media: ["files"] },
   publish:{ text: [],                                 media: [] }
 };
+
+/** 文本阶段每步的重试次数（只针对接口没接通的情况，见 isTransientTextError）。 */
+export const TEXT_STAGE_RETRIES = 2;
+
+/**
+ * 这个错误值不值得重试？
+ *
+ * 判据是「同样的请求再发一次，有没有可能不一样」。超时、连接被掐、网关 5xx、
+ * 限流都属于这一类；而密钥错、模型名错、参数非法、内容被拒，重发多少次都是
+ * 同一个结果，重试只是把失败推迟几分钟。
+ *
+ * 只能按错误文案判断 —— 上游把各种异常都包成了 Error，没留结构化的类型。
+ */
+export function isTransientTextError(error) {
+  const message = String(error?.message || "");
+  if (/^(TimeoutError|AbortError)$/.test(String(error?.name || ""))) return true;
+  // 「返回了空内容」也算瞬时：信封是对的，只是模型这次没吐东西。而「没有找到
+  // 文本内容」（整个结构不认识）是配置错，不算 —— 两者在 providers.mjs 里已经
+  // 分成两句不同的话，正是为了让这里能区别对待。
+  return /超时|timeout|aborted|无法连接|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|network|502|503|504|429|限流|rate limit|返回了空内容/i
+    .test(message);
+}
 
 /** 给一个 Promise 加超时。超时只是让调用方能继续走，底层请求该怎么结束还怎么结束。 */
 function withTimeout(promise, ms, message) {
@@ -419,7 +441,7 @@ function buildStageProviders(config) {
   return out;
 }
 
-export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], skillHistory = [], stages = null, reuse = null } = {}) {
+export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], skillHistory = [], phrases = {}, phraseHistory = {}, stages = null, reuse = null } = {}) {
   const want = (stage) => !stages || stages.includes(stage);
   const { brief, date } = input;
   // 四步可以各用各的模型：config.textProvider.stageModels 里给哪一步写了模型名，
@@ -467,7 +489,27 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   const callStage = async (slot, instructions, stageInput, { complete = true } = {}) => {
     const stage = stageProgress[slot];
     progress({ step: slot, status: "running", progress: stage.start, message: stage.startMessage });
-    const result = await callTextEngine(config, providers[slot], instructions, stageInput, { mode: engineMode });
+    let result;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        result = await callTextEngine(config, providers[slot], instructions, stageInput, { mode: engineMode });
+        break;
+      } catch (error) {
+        // 只重试「这次没接通」，不重试「模型不接受这个请求」。
+        // 超时、连接中断是网络抖动，同样的请求再发一次通常就过了；而 401、
+        // 模型名错、参数非法这些重发一万次也是同样的错，重试只是白等。
+        // （2026-08-10 实测：六篇里动漫那篇 420s 超时，整篇丢掉，而同一批
+        //   另外五篇都正常出稿 —— 典型的抖动，本该自动重来。）
+        if (attempt > TEXT_STAGE_RETRIES || !isTransientTextError(error)) throw error;
+        progress({
+          step: slot,
+          status: "running",
+          progress: stage.start,
+          message: `${stage.startMessage}（接口未响应，第 ${attempt} 次重试）`,
+          detail: error.message
+        });
+      }
+    }
     runs.push({
       stage: slot,
       engine: result.engine,
@@ -531,8 +573,17 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
       ? `已检查 ${topicHistory.length} 个历史题目 · ${topicRun?.model || topicRun?.engine || "文本引擎"}`
       : "本次重跑不重新选题"
   });
+  // 开场引导语和结尾落款由**代码**从池子里轮，不让模型自己「轮换使用」——
+  // 模型没有跨篇记忆，说了也做不到（实测六篇里三篇结尾都是「晚安，亲爱的」，
+  // 而各册规范都写着要轮换）。池子和历史由调用方传入，选中的结果随返回值带出去记账。
+  const 开场语 = pickPhrase(poolFor(phrases.opening, slots.script?.name), phraseHistory.opening);
+  const 结尾语 = pickPhrase(poolFor(phrases.closing, slots.script?.name), phraseHistory.closing);
+  const 语句要求 = [
+    开场语 ? `正文的第一句用这句：「${开场语}」\n**它就是本篇的开场首句**，已经按本 Skill 的开场手法写好了 —— 从它自然往下接着写即可，不要在它前面加任何句子，也不要在它之后再补一句同类的开场。` : "",
+    结尾语 ? `落款用这一句收尾：「${结尾语}」。它是**最后一句**，放在本篇收尾手法完成**之后**，不替代收尾手法。` : ""
+  ].filter(Boolean).join("\n");
   let script = want("script")
-    ? await callStage("script", slots.script.content, `日期：${date}\n时段：${period}\n篇幅原则：${lengthPrinciple}。先让结构、呼吸、身体扫描、意象旅程和结尾自然完成；不得填充空话，也不得省略必要段落。\n已自动选择且查重通过的选题：\n${topic}\n\n请完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；中午结尾必须完整唤醒，晚上结尾不得唤醒。`)
+    ? await callStage("script", slots.script.content, `日期：${date}\n时段：${period}\n篇幅原则：${lengthPrinciple}。先让结构、呼吸、身体扫描、意象旅程和结尾自然完成；不得填充空话，也不得省略必要段落。\n已自动选择且查重通过的选题：\n${topic}\n${语句要求 ? `\n${语句要求}\n` : ""}\n请完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；中午结尾必须完整唤醒，晚上结尾不得唤醒。`)
     : String(reuse?.script || "");
   if (!want("script")) {
     if (!script) throw new Error("上次的原稿记录为空，无法在复用原稿的前提下重跑");
@@ -544,45 +595,24 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   // 超了 49% 的稿子被砍掉四分之一后「落进区间」，全程零告警（2026-07-30 实测
   // 287 → 213 字）。责任放错地方，两边都失灵 —— 原稿没人查，转写又被迫干了
   // 不该它干的活。
-  // 只查下限。写长了不管 —— 助眠成品长了顶多是听众早睡着，短了才是缺斤少两。
+  // 只查下限、只报警，**不重写**。
+  //
+  // 重写要把整份 Skill 再当一次 system 提示词发出去。六册合并版实测每篇约
+  // 2.7 万 token、写一篇要 3–7 分钟 —— 触发一次重写就是双倍，代价远大于
+  // 「篇幅差几十个字」这件事本身。而且篇幅偏短的成品仍然可用，不值得为它
+  // 把耗时和费用翻倍。
+  //
+  // 所以这里只把事实说出来，让人看得见：要不要重跑由用户决定。
   if (want("script") && durationPlan) {
     const scriptChars = countHanCharacters(script);
     if (scriptChars < durationPlan.minChars) {
       progress({
         step: "script",
         status: "running",
-        progress: 30,
-        message: "原稿篇幅不足目标，正在重写",
-        detail: `当前 ${scriptChars} 字 · 下限 ${durationPlan.minChars} 字`
+        progress: 34,
+        message: `原稿 ${scriptChars} 字，不足 ${durationPlan.minutes} 分钟档的下限 ${durationPlan.minChars} 字`,
+        detail: "继续生成，成品会短于目标时长"
       });
-      // 和转写那边一样：重写失败就沿用上一版继续跑。已经写出来的稿子是能用的，
-      // 只是长短偏了，不值得把整轮（含选题查重）连坐掉。
-      try {
-        const rewritten = await callStage(
-          "script",
-          slots.script.content,
-          `上一版文稿只有 ${scriptChars} 个中文字，不足 ${durationPlan.minutes} 分钟版的下限 ${durationPlan.minChars} 字。请保持同一选题、同样的结构完整度和结尾属性重写，把内容展开到 ${durationPlan.targetChars} 字上下 —— 写长了没关系，但绝不能再少于 ${durationPlan.minChars} 字。靠把意象、身体扫描和呼吸引导写得更从容来加长，不要填充空话，也不要改变选题。\n日期：${date}\n时段：${period}\n选题：\n${topic}\n\n上一版文稿：\n${script}`
-        );
-        if (rewritten) script = rewritten;
-      } catch (error) {
-        progress({
-          step: "script",
-          status: "running",
-          progress: 32,
-          message: `重写原稿失败，沿用上一版：${error.message}`,
-          detail: `保留 ${scriptChars} 字`
-        });
-      }
-      const finalScriptChars = countHanCharacters(script);
-      if (finalScriptChars < durationPlan.minChars) {
-        progress({
-          step: "script",
-          status: "running",
-          progress: 34,
-          message: `原稿 ${finalScriptChars} 字，仍不足 ${durationPlan.minutes} 分钟档的下限 ${durationPlan.minChars} 字`,
-          detail: "继续生成，成品会短于目标时长"
-        });
-      }
     }
   }
   await onPartial?.({ topic, script, engineRuns: runs });
@@ -699,6 +729,8 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
     pacing,
     copy,
     scriptSkill: slots.script?.name || "",
+    // 带出去给调用方记台账 —— 这一层拿不到 workspaceRoot
+    usedPhrases: { opening: 开场语 || "", closing: 结尾语 || "" },
     engineRuns: runs,
     warnings: [
       ...(!slots.ttsOptimizer ? ["未绑定 MiniMax 优化 Skill，本次直接使用写作稿配音。"] : []),
@@ -708,21 +740,32 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   };
 }
 
+
+/** 把这一轮实际用掉的开场语和落款记进台账。两个都可能为空（池子没配就跳过）。 */
+async function recordUsedPhrases(config, workspaceRoot, used) {
+  for (const kind of ["opening", "closing"]) {
+    if (used?.[kind]) await recordPhraseUse(config, workspaceRoot, kind, used[kind]);
+  }
+}
+
 export async function runAudioOnly(config, input, workspaceRoot, { onProgress } = {}) {
   const progress = (event) => onProgress?.(event);
   const jobId = `${input.date}-${Date.now()}`;
   const runDir = path.resolve(workspaceRoot, config.app.runRoot, jobId);
   progress({ step: "prepare", status: "running", progress: 1, message: "正在扫描历史选题库并排除重复" });
-  const [topicHistory, skillHistory] = await Promise.all([
+  const [topicHistory, skillHistory, phraseHistory, phrases] = await Promise.all([
     loadTopicHistory(config, workspaceRoot),
     loadSkillHistory(config, workspaceRoot),
+    loadPhraseHistory(config, workspaceRoot),
+    readJson(path.join(workspaceRoot, "data/phrases.json"), {}),
     mkdir(runDir, { recursive: true })
   ]);
   progress({ step: "prepare", status: "done", progress: 3, message: "历史选题检查完成", detail: `已载入 ${topicHistory.length} 个历史题目` });
 
-  const text = await runTextWorkflow(config, { ...input, skipPublishingCopy: true }, { onProgress, topicHistory, skillHistory });
+  const text = await runTextWorkflow(config, { ...input, skipPublishingCopy: true }, { onProgress, topicHistory, skillHistory, phrases, phraseHistory });
   // 轮动台账在文稿写出来之后才记 —— 写稿失败的那次不该占掉一个轮次。
   if (text.scriptSkill) await recordSkillUse(config, workspaceRoot, text.scriptSkill);
+  await recordUsedPhrases(config, workspaceRoot, text.usedPhrases);
   const selectedTopic = extractTopicRecord(text.topic);
   const base = safeName(input.outputName || selectedTopic?.title || input.date);
   const outputDir = path.resolve(workspaceRoot, config.app.outputRoot, input.date, base);
@@ -932,9 +975,11 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
   const runDir = path.resolve(workspaceRoot, config.app.runRoot, jobId);
   // 把 runId 透给服务端：界面要按它去读 text.json 展示每一步的产物。
   progress({ step: "prepare", status: "running", progress: 1, message: "正在扫描历史选题库并排除重复", runId: jobId });
-  const [topicHistory, skillHistory] = await Promise.all([
+  const [topicHistory, skillHistory, phraseHistory, phrases] = await Promise.all([
     loadTopicHistory(config, workspaceRoot),
     loadSkillHistory(config, workspaceRoot),
+    loadPhraseHistory(config, workspaceRoot),
+    readJson(path.join(workspaceRoot, "data/phrases.json"), {}),
     mkdir(runDir, { recursive: true })
   ]);
   progress({ step: "prepare", status: "done", progress: 3, message: "历史选题检查完成", detail: `已载入 ${topicHistory.length} 个历史题目` });
@@ -956,6 +1001,8 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
       onProgress,
       topicHistory,
       skillHistory,
+      phrases,
+      phraseHistory,
       stages: plan?.text || null,
       reuse: priorText,
       onPartial: (partial) => writeJson(path.join(runDir, "text.json"), partial).catch(() => {})
@@ -964,6 +1011,7 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
   // 并没有消耗一个文体，记了会把轮动顺序推错。
   if (!resumeText && !reuseWholeText && text.scriptSkill) {
     await recordSkillUse(config, workspaceRoot, text.scriptSkill);
+    await recordUsedPhrases(config, workspaceRoot, text.usedPhrases);
   }
   if (reuseWholeText) {
     for (const [step, message] of [

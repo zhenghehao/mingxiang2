@@ -3,13 +3,49 @@ import assert from "node:assert/strict";
 import {
   analyzeTtsPacing,
   formatPublishingContext,
+  isTransientTextError,
   resolveDurationPlan,
   resolveExtremeDurationPlan,
   sanitizeTtsText,
+  TEXT_STAGE_RETRIES,
   TTS_DRIFT_TOLERANCE,
   ttsContentDrift,
   ttsPacingNeedsRetry
 } from "../src/workflow.mjs";
+
+// ── 只重试「没接通」，不重试「模型不接受」 ────────────────────────────────
+test("超时和连接类失败要重试 —— 同样的请求再发一次可能就过了", () => {
+  // 2026-08-10 实测：六篇里动漫那篇 420s 超时整篇丢掉，同批另外五篇都正常出稿。
+  for (const msg of [
+    "接口请求超时，请检查地址、网络或模型状态",
+    "The operation was aborted due to timeout",
+    "无法连接接口：fetch failed",
+    "接口请求失败：503 upstream unavailable",
+    "接口请求失败：429 rate limit exceeded",
+    "无法连接接口：socket hang up",
+    "接口返回了空内容（choices 在但 content 为空），可能是模型这次没有输出"
+  ]) {
+    assert.equal(isTransientTextError(new Error(msg)), true, `应当重试：${msg}`);
+  }
+  assert.equal(isTransientTextError(Object.assign(new Error("x"), { name: "TimeoutError" })), true);
+});
+
+test("业务错误不重试 —— 重发一万次也是同一个错", () => {
+  for (const msg of [
+    "接口请求失败：401 invalid api key",
+    "接口请求失败：404 model not found",
+    "接口返回的不是 JSON，请确认它兼容 Chat Completions 格式",
+    "接口已响应，但没有找到文本内容；可在高级设置中填写响应路径",
+    "请先为“写作引擎”绑定 Skill"
+  ]) {
+    assert.equal(isTransientTextError(new Error(msg)), false, `不该重试：${msg}`);
+  }
+  assert.equal(isTransientTextError(null), false, "拿到空错误时不能当可重试，否则会空转到重试上限");
+});
+
+test("重试次数有限，不会无限转", () => {
+  assert.ok(Number.isInteger(TEXT_STAGE_RETRIES) && TEXT_STAGE_RETRIES >= 1 && TEXT_STAGE_RETRIES <= 5);
+});
 
 // ── 篇幅是单边约束：够长就行，超了不管 ──────────────────────────────────
 test("时长标尺只设下限，上限不作判定", () => {

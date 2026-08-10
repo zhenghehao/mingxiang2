@@ -67,3 +67,58 @@ export async function recordSkillUse(config, workspaceRoot, name) {
   await writeJson(file, { version: 1, updatedAt: new Date().toISOString(), used });
   return used;
 }
+
+// ── 语句轮动（开场引导语 / 结尾落款）────────────────────────────────────
+//
+// 和文体轮动同一套策略，只是池子换成句子。**必须由代码挑**：让模型自己
+// 「轮换使用」实测不管用 —— 六册那批六篇里三篇结尾都是「晚安，亲爱的」，
+// 而各册规范都写着要轮换。模型没有跨篇记忆，说了也做不到。
+
+function phraseLedgerFile(config, workspaceRoot) {
+  return path.join(path.resolve(workspaceRoot, config.app.outputRoot), "语句轮动.json");
+}
+
+export async function loadPhraseHistory(config, workspaceRoot) {
+  const ledger = await readJson(phraseLedgerFile(config, workspaceRoot), {});
+  return ledger && typeof ledger === "object" ? ledger : {};
+}
+
+/**
+ * 从池子里挑下一句。复用 pickNextSkill 的 LRU 语义，只是这里的「名字」是整句话。
+ * 池子为空时返回空串，由调用方决定不注入。
+ */
+export function pickPhrase(pool, history = []) {
+  return pickNextSkill(Array.isArray(pool) ? pool.filter(Boolean) : [], history);
+}
+
+/**
+ * 取某个 skill 该用的句子池。
+ *
+ * 开场按册分池：六册各有互不相容的首句要求（A 要陈述性减法、B 要古诗原句、
+ * C 要时间滑门且无「你」、D 要一个声音、F 要客观陈述且无「你」），全局共用
+ * 一套必然违反其中四册 —— 实测 v4 就是这么崩的：两篇跌破字数下限、B 册整册
+ * 身份丢失、A 册在引导语之后又卸载了一遍。
+ *
+ * 传进来的可以是数组（老格式，全局共用）或对象（新格式，按 skill 名分池）。
+ * 两种都接受，省得改了配置格式就把旧配置读崩。
+ */
+export function poolFor(pools, skillName) {
+  if (Array.isArray(pools)) return pools;
+  if (!pools || typeof pools !== "object") return [];
+  const named = pools[skillName];
+  if (Array.isArray(named) && named.length) return named;
+  return Array.isArray(pools.default) ? pools.default : [];
+}
+
+/** 记一笔。kind 是 "opening" / "closing" 这类分类，各自一条独立的历史。 */
+export async function recordPhraseUse(config, workspaceRoot, kind, phrase) {
+  if (!kind || !phrase) return {};
+  const file = phraseLedgerFile(config, workspaceRoot);
+  const all = await loadPhraseHistory(config, workspaceRoot);
+  const current = Array.isArray(all[kind]) ? all[kind] : [];
+  all[kind] = [phrase, ...current.filter((item) => item !== phrase)].slice(0, 50);
+  all.updatedAt = new Date().toISOString();
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeJson(file, all);
+  return all;
+}
