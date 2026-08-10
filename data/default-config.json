@@ -10,7 +10,14 @@
   ],
   "slots": {
     "topic": "sleep-topic-picker",
-    "script": "sleep-hypnosis-writer",
+    "script": [
+      "sleep-hypnosis-dao-chan",
+      "sleep-hypnosis-gushiwen",
+      "sleep-hypnosis-tonghua",
+      "sleep-hypnosis-dongman",
+      "sleep-hypnosis-huayu-song",
+      "sleep-hypnosis-ziran"
+    ],
     "ttsOptimizer": "minimax-meditation-tts-extreme-immersion",
     "copywriter": "sleep-content-publisher-copywriter"
   },
@@ -120,5 +127,5 @@
       "timeoutMs": 120000
     }
   },
-  "_slots说明": "用 Skill 名字而不是 id 绑定。id 是绝对路径的哈希，换机器就变；名字来自 SKILL.md 的 frontmatter，克隆到哪都一样。"
+  "_slots说明": "用 Skill 名字而不是 id 绑定。id 是绝对路径的哈希，换机器就变；名字来自 SKILL.md 的 frontmatter，克隆到哪都一样。script 写成数组＝六个文体轮动，按「最久没用的先上」挑，台账在 output/写稿轮动.json；写成单个字符串就固定用那一个。"
 }
