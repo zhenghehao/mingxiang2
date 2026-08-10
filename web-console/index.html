@@ -231,9 +231,9 @@ const size = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1
 
 async function load() {
   hide($("listMsg"));
-  let runs;
+  let runs, skippedHidden = 0;
   try {
-    ({ runs } = await api("/api/runs"));
+    ({ runs, skippedHidden = 0 } = await api("/api/runs"));
   } catch (e) {
     if (e.message !== "no_session") show($("listMsg"), e.message, "bad");
     return;
@@ -241,6 +241,11 @@ async function load() {
 
   const box = $("runs");
   box.textContent = "";
+  // 定时跳过的记录已经在接口那层滤掉了。这里说一声，否则「每 2 小时触发一次，
+  // 列表里却看不到」会让人以为记录丢了。
+  if (skippedHidden) {
+    show($("listMsg"), `已隐藏 ${skippedHidden} 条定时跳过的记录（自动生成关闭时的空触发，不消耗额度）`, "info");
+  }
   if (!runs.length) {
     show($("listMsg"), "还没有任何运行记录。点上面「先体检密钥」跑第一条。", "info");
     return;
