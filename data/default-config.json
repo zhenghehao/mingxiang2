@@ -55,7 +55,7 @@
     "subscriptionApiKeyEnv": "MINIMAX_SUBSCRIPTION_KEY",
     "model": "speech-02-hd",
     "voiceId": "ttv-voice-2026071719084426-hK1EVXZc",
-    "speed": 0.78,
+    "speed": 0.8,
     "volume": 1,
     "pitch": 0,
     "emotion": "happy",
@@ -69,13 +69,13 @@
     "videoRoot": "assets/video",
     "ffmpegPath": "bundled",
     "ffprobePath": "bundled",
-    "introSeconds": 10,
+    "introSeconds": 2,
     "bgmGainDb": -15,
     "fadeSeconds": 25,
     "videoQuality": "balanced",
     "width": 1080,
     "height": 1920,
-    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。"
+    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。2026-08-14：introSeconds 从 10 改成 2（本机试听后定的），speed 从 0.78 改成 0.8 —— 两处都是让云端跟上本机，否则同一套代码两边出的片不是一个味道。"
   },
   "agnes": {
     "enabled": false,
