@@ -26,6 +26,9 @@ jobs:
           SENSENOVA_API_KEYS: ${{ secrets.SENSENOVA_API_KEYS }}
           SENSENOVA_SCORER_KEYS: ${{ secrets.SENSENOVA_SCORER_KEYS }}
           SENSENOVA_MOTION_KEYS: ${{ secrets.SENSENOVA_MOTION_KEYS }}
+          # 体检的 secret 清单必须和 generate.yml 完全一致，
+          # 否则「体检通过」证明不了正式跑也能过 —— 这正是它存在的意义。
+          SENSENOVA_DIRECTOR_KEYS: ${{ secrets.SENSENOVA_DIRECTOR_KEYS }}
           AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
           # 必须和 generate.yml 一致，否则体检通过了正式跑还是会 401。
           # runner 在海外走 .com，本机在国内走 default-config 里的 .cn。
