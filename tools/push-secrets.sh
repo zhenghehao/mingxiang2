@@ -23,6 +23,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="${GITHUB_REPO:-zhenghehao/mingxiang2}"
 APPLY=0
+FAILED=0
 [ "${1:-}" = "--apply" ] && APPLY=1
 
 command -v gh >/dev/null || { echo "需要 gh CLI：brew install gh && gh auth login"; exit 1; }
@@ -55,8 +56,16 @@ set_secret() {
   local n=$(printf '%s' "$value" | tr ',' '\n' | grep -c . || true)
   printf '  %-28s %3d 把 / %5d 字符  %s\n' "$name" "$n" "${#value}" "$desc"
   if [ "$APPLY" = "1" ]; then
-    printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --body-file - \
-      && printf '  %-28s ✓ 已写入\n' ""
+    # 不传 --body：gh 在没给它时就从标准输入读，值因此不进 argv
+    # （argv 会出现在 ps 输出和 shell 历史里）。
+    # 也别用 --body-file -，老一点的 gh 没有这个 flag，实测 2.x 上直接 unknown flag。
+    # printf '%s' 而不是 echo：echo 会补一个换行，那个换行会被当成 key 的一部分。
+    if printf '%s' "$value" | gh secret set "$name" --repo "$REPO" >/dev/null 2>&1; then
+      printf '  %-28s ✓ 已写入\n' ""
+    else
+      printf '  %-28s ✗ 写入失败\n' ""
+      FAILED=1
+    fi
   fi
 }
 
@@ -81,6 +90,10 @@ set_secret MINIMAX_API_KEY         "$(read_keychain minimax-api-key)"       "配
 set_secret MINIMAX_SUBSCRIPTION_KEY "$(read_keychain minimax-subscription-key)" "配音（订阅，可空）"
 
 echo
+if [ "$APPLY" = "1" ] && [ "$FAILED" = "1" ]; then
+  echo "有 secret 没写成功，上面标了 ✗。先解决再往下走。"
+  exit 1
+fi
 if [ "$APPLY" = "1" ]; then
   echo "写完了。建议接着跑一次体检确认云端真的能用："
   echo "  gh workflow run preflight.yml --repo $REPO"
