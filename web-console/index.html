@@ -74,6 +74,13 @@
           border-top-color: var(--run); border-radius:50%; animation: sp .8s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
   @media (max-width: 560px) { .run-meta { margin-left: 0; text-align: left; width: 100%; } }
+.art-row{display:flex;align-items:center;gap:6px}
+.art-row .art{flex:1}
+.art-del{background:none;border:1px solid rgba(255,107,107,.45);color:#ff6b6b;border-radius:6px;
+  padding:4px 10px;font-size:12px;cursor:pointer;white-space:nowrap}
+.art-del:hover:not(:disabled){background:rgba(255,107,107,.12)}
+.art-del:disabled{opacity:.5;cursor:default}
+.art-del.armed{background:rgba(255,107,107,.16);font-weight:600}
 </style>
 </head>
 <body>
@@ -343,7 +350,57 @@ async function fillDetail(host, run) {
       const sz = document.createElement("span");
       sz.textContent = size(a.bytes);
       el.append(label, sz);
-      arts.append(el);
+
+      // 删除按钮跟下载摆在一起：下完就删是最常见的动作，隔一个页面就没人删了。
+      // 它不能放在 <a> 里面 —— 嵌在链接里的按钮，点它会连带触发下载。
+      const del = document.createElement("button");
+      del.className = "art-del";
+      del.textContent = "删除";
+      del.title = "从 GitHub 删掉这个成品，腾出存储配额";
+      // 两段式确认，不用 confirm()：原生对话框在内嵌 webview 里会被宿主掐掉，
+      // 返回 false 给页面，表现成「点了删除毫无反应」，而且不报任何错。
+      let 待确认 = false;
+      let 定时器 = 0;
+      const 复位 = () => {
+        待确认 = false;
+        clearTimeout(定时器);
+        del.textContent = "删除";
+        del.classList.remove("armed");
+        del.title = "从 GitHub 删掉这个成品，腾出存储配额";
+      };
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!待确认) {
+          待确认 = true;
+          del.textContent = "确认删除？不可恢复";
+          del.classList.add("armed");
+          del.title = "再点一次就真的删了";
+          // 手滑点开之后没有下文的话自己收回去，免得一直亮着红字
+          定时器 = setTimeout(复位, 6000);
+          return;
+        }
+        clearTimeout(定时器);
+        del.disabled = true;
+        del.textContent = "删除中…";
+        try {
+          const r = await fetch("/api/artifact?id=" + a.id, { method: "DELETE" });
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(body.error || ("HTTP " + r.status));
+          wrap.remove();
+        } catch (err) {
+          del.disabled = false;
+          复位();
+          // alert 同样会被掐掉，所以把错误写在按钮上，而不是弹窗
+          del.textContent = "删除失败";
+          del.title = err.message;
+        }
+      };
+
+      const wrap = document.createElement("div");
+      wrap.className = "art-row";
+      wrap.append(el, del);
+      arts.append(wrap);
     }
     host.append(arts);
   } else if (run.status === "completed" && run.conclusion === "success") {

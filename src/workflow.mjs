@@ -9,7 +9,7 @@ import {
 import { agnesHeadlessEnabled, generateAgnesVisualsHeadless } from "./agnes-headless.mjs";
 import { callTextEngine, synthesizeMinimax } from "./providers.mjs";
 import { resolveSlots } from "./skills.mjs";
-import { loadPhraseHistory, loadSkillHistory, pickNextSkill, pickPhrase, poolFor, recordPhraseUse, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
+import { loadPhraseHistory, loadSkillHistory, pickPhrase, pickScriptSkill, poolFor, recordPhraseUse, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
 import {
   CancelledError, probeDuration, renderAudio, renderVideo, resolveMediaBinary, resolveVideoProfile, selectDatedAsset
 } from "./media.mjs";
@@ -339,6 +339,65 @@ function startAgnesVisualTask(config, text, title, progress, signal) {
   }).then((result) => ({ result, error: null })).catch((error) => ({ result: null, error }));
 }
 
+/**
+ * 把视觉候选逐条导成完整成片。
+ *
+ * 有多条候选时**每条都导一个**：音频完全相同，只有画面不同，所以人是在成片
+ * 之间挑，不是在 5 秒循环片之间挑 —— 后者看不出配上十几分钟音频、循环几百遍
+ * 之后是什么感觉，而那才是观众看到的东西。
+ *
+ * 抽成函数是因为 runAll 和 resumeMedia 是两条各写各的独立路径。只改一边会
+ * 变成「整跑出 5 个、续跑出 1 个」，而续跑恰恰是重试时最常走的那条。
+ */
+async function renderVideoVariants(config, {
+  visuals, audio, outputAudio, outputVideo, videoDir, base, signal, progress, ensureLive
+}) {
+  const 候选 = Array.isArray(visuals.candidates) && visuals.candidates.length
+    ? visuals.candidates
+    : [{ index: 0, title: "", loopPath: visuals.loopVideoPath, coverPath: visuals.introVideoPath }];
+  const 多条 = 候选.length > 1;
+  const variants = [];
+  let first = null;
+  for (const [n, cand] of 候选.entries()) {
+    ensureLive?.();
+    // 单条时文件名保持不变，下游和历史成品都不受影响；
+    // 多条时逐个编号，编号和界面上显示的序号一一对应。
+    const 目标 = 多条
+      ? path.join(videoDir, `${base}-候选${n + 1}${cand.title ? `-${safeName(cand.title)}` : ""}.mp4`)
+      : outputVideo;
+    const 本条 = await renderVideo(config, {
+      audioPath: outputAudio,
+      audioDuration: audio.totalDuration,
+      videoPath: visuals.videoPath,
+      introVideoPath: cand.coverPath || visuals.introVideoPath,
+      loopVideoPath: cand.loopPath || visuals.loopVideoPath,
+      endFadeSeconds: visuals.source === "agnes" ? agnesEndFadeSeconds(config) : 0,
+      outputVideo: 目标,
+      signal,
+      onProgress: (ratio) => progress?.({
+        step: "video",
+        status: "running",
+        // 按「第几条 + 这条的百分比」摊到 83~98 之间，
+        // 否则五条各自从 0 跑到 100，进度条会来回横跳五次
+        progress: Math.round(83 + ((n + ratio) / 候选.length) * 15),
+        message: 多条
+          ? `正在导出第 ${n + 1}/${候选.length} 个成片 · ${Math.round(ratio * 100)}%`
+          : (ratio >= 1 ? "成品视频已经导出" : `正在压缩并导出视频 · ${Math.round(ratio * 100)}%`)
+      })
+    });
+    variants.push({ index: n, title: cand.title || "", outputVideo: 目标, ...本条 });
+    if (n === 0) first = 本条;
+  }
+  progress?.({
+    step: "video",
+    status: "done",
+    progress: 98,
+    message: 多条 ? `${候选.length} 个候选成片已全部导出` : "成品视频已经导出",
+    detail: `${first.videoProfile.width}×${first.videoProfile.height} · ${first.videoProfile.fps} 帧`
+  });
+  return { video: first, videoVariants: variants };
+}
+
 async function resolveVisualAssets(config, input, agnesTask, progress) {
   if (agnesTask) {
     const outcome = await agnesTask;
@@ -356,6 +415,9 @@ async function resolveVisualAssets(config, input, agnesTask, progress) {
         loopVideoPath: outcome.result.loopPath,
         videoPath: null,
         agnes: outcome.result,
+        // 全部候选透出来：下游要给每一条各导一个完整成片，让人在**成片**上挑，
+        // 而不是在 5 秒循环片上挑 —— 循环片看不出配上音频铺满十几分钟是什么感觉。
+        candidates: outcome.result.candidates || [],
         warning: null
       };
     }
@@ -450,10 +512,12 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   const providers = { ...buildStageProviders(config), ...(input.providers || {}) };
   const period = /中午|午休|午间/.test(String(brief || "")) ? "中午" : "晚上";
   const engineMode = String(input?.textEngine?.mode || config?.textEngine?.mode || "api");
-  // 写稿槽位可以配成一串 Skill，每次挑最久没用的那个 —— 六个文体轮着来，
+  // 写稿槽位可以配成一串 Skill，每次从里面挑一个 —— 六个文体轮着来，
   // 频道才不会听起来永远是同一篇。配成单个字符串时池子只有一个元素，行为不变。
+  // 挑法见 skill-rotation.mjs：默认 random（随机但不连着重样），可配 lru。
   const scriptPool = scriptSkillPool(config.slots);
-  const pickedScript = input.scriptSkill || pickNextSkill(scriptPool, skillHistory);
+  const rotationMode = String(config.scriptRotation || "random");
+  const pickedScript = input.scriptSkill || pickScriptSkill(scriptPool, skillHistory, rotationMode);
   const slots = await resolveSlots(config, { picked: { script: pickedScript } });
   for (const required of ["topic", "script"]) {
     if (!slots[required]) throw new Error(`请先为“${SLOT_LABELS[required]}”绑定 Skill`);
@@ -465,7 +529,9 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
       status: "running",
       progress: 15,
       message: `本次写稿文体：${slots.script.name}`,
-      detail: `${scriptPool.length} 个文体轮动 · 最久未用的优先`
+      detail: rotationMode.toLowerCase() === "lru"
+        ? `${scriptPool.length} 个文体轮动 · 最久未用的优先`
+        : `${scriptPool.length} 个文体轮动 · 随机（不与上一篇重样）`
     });
   }
   // 时长优先用界面显式传入的分钟数；没传就按默认 10 分钟。
@@ -1160,30 +1226,24 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
 
   ensureLive();
   let video;
+  let videoVariants = [];
   if (redo("video")) {
-    video = await renderVideo(config, {
-      audioPath: outputAudio,
-      audioDuration: audio.totalDuration,
-      videoPath: visuals.videoPath,
-      introVideoPath: visuals.introVideoPath,
-      loopVideoPath: visuals.loopVideoPath,
-      endFadeSeconds: visuals.source === "agnes" ? agnesEndFadeSeconds(config) : 0,
-      outputVideo,
-      signal,
-      onProgress: (ratio) => progress({
-        step: "video",
-        status: ratio >= 1 ? "done" : "running",
-        progress: Math.round(83 + ratio * 15),
-        message: ratio >= 1 ? "成品视频已经导出" : `正在压缩并导出视频 · ${Math.round(ratio * 100)}%`
-      })
-    });
-    progress({ step: "video", status: "done", progress: 98, message: "成品视频已经导出", detail: `${video.videoProfile.width}×${video.videoProfile.height} · ${video.videoProfile.fps} 帧` });
+    ({ video, videoVariants } = await renderVideoVariants(config, {
+      visuals, audio, outputAudio, outputVideo, videoDir, base, signal, progress, ensureLive
+    }));
   } else {
     video = await reuseVideo(config, outputVideo, priorManifest);
     progress({ step: "video", status: "done", progress: 98, message: "复用上次成品视频", detail: outputVideo });
   }
 
-  const media = { ...audio, ...video, visualSource: visuals.source, agnes: visuals.agnes, warnings: visuals.warning ? [visuals.warning] : [] };
+  const media = {
+    ...audio, ...video,
+    visualSource: visuals.source,
+    agnes: visuals.agnes,
+    // 多个候选成片。只有一条时也放进来，下游不用分两种情况处理。
+    videoVariants,
+    warnings: visuals.warning ? [visuals.warning] : []
+  };
   progress({ step: "files", status: "running", progress: 99, message: "正在整理文本、音频、视频和发布清单" });
   // 后台跑的封面到这里才收 —— 视频渲染期间它多半早就好了
   const coverResult = await coverTask;
@@ -1291,16 +1351,19 @@ export async function resumeMedia(config, input, workspaceRoot, { onProgress, si
 
   progress({ step: "video", status: "running", progress: 84, message: "正在通过 Agnes 生成画面并导出视频" });
   const visuals = await resolveVisualAssets(config, { ...input, date }, agnesTask, null);
-  const video = await renderVideo(config, {
-    audioPath: outputAudio,
-    audioDuration: audio.totalDuration,
-    videoPath: visuals.videoPath,
-    introVideoPath: visuals.introVideoPath,
-    loopVideoPath: visuals.loopVideoPath,
-    endFadeSeconds: visuals.source === "agnes" ? agnesEndFadeSeconds(config) : 0,
-    outputVideo
+  // 多候选的导出逻辑必须和 runAll 保持一致。这两条是各写各的独立路径，
+  // 只改一边的话会变成「整跑出 5 个、续跑出 1 个」——同一套配置两种结果，
+  // 而续跑恰恰是重试时最常走的那条路。
+  const { video, videoVariants } = await renderVideoVariants(config, {
+    visuals, audio, outputAudio, outputVideo, videoDir, base, signal, progress
   });
-  const media = { ...audio, ...video, visualSource: visuals.source, agnes: visuals.agnes, warnings: visuals.warning ? [visuals.warning] : [] };
+  const media = {
+    ...audio, ...video,
+    visualSource: visuals.source,
+    agnes: visuals.agnes,
+    videoVariants,
+    warnings: visuals.warning ? [visuals.warning] : []
+  };
   const manifest = {
     jobId,
     date,

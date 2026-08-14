@@ -124,6 +124,8 @@ function setStudioTab(tab) {
   document.querySelectorAll(".studio-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `studio-${state.studioTab}`);
   });
+  // 扫整个 output 目录算体积是有成本的，所以切到这个标签才读，不是一开页面就读
+  if (state.studioTab === "outputs") loadOutputArchive();
 }
 
 function showVisualStudio(tab = "agnes") {
@@ -210,6 +212,8 @@ function savedProvider(stageId) {
   }
 }
 
+// 每个步骤那行里的「API Key」是**覆盖用**的，留空就走上面那把钥匙串里的共用 key。
+// 说明写在占位符里，免得又出现「以为填了其实没存」那种事。
 function renderProviderSettings() {
   $("providerSettings").innerHTML = STAGES.map((stage, index) => {
     const provider = savedProvider(stage.id);
@@ -222,7 +226,7 @@ function renderProviderSettings() {
         <div class="provider-fields">
           <label>接口地址<input data-field="endpoint" value="${escapeHtml(provider.endpoint)}"></label>
           <label>模型<input data-field="model" value="${escapeHtml(provider.model)}" placeholder="模型 ID"></label>
-          <label>API Key<input data-field="apiKey" type="password" autocomplete="off" placeholder="已安全保存，可留空"></label>
+          <label>API Key<input data-field="apiKey" type="password" autocomplete="off" placeholder="留空＝用上面那把共用 Key"></label>
           <label>温度<input data-field="temperature" type="number" min="0" max="2" step="0.1" value="${escapeHtml(provider.temperature)}"></label>
           <button class="button quiet" data-test-provider="${stage.id}">测试</button>
         </div>
@@ -1086,6 +1090,81 @@ function outputRow(name, detail, filePath) {
   </div>`;
 }
 
+/**
+ * 磁盘上的历史成品。
+ *
+ * 上面那个列表只有**本次运行**的产出（读的是内存里的 state.mediaResult），
+ * 服务一重启就空了，而盘上的东西一直在堆 —— 到今天 output/ 已经 100M 出头。
+ * 这一块直接读盘，是为了让「哪些还占着地方」这件事在界面上看得见。
+ */
+async function loadOutputArchive() {
+  const list = $("outputArchive");
+  const total = $("outputArchiveTotal");
+  state.archiveConfirming = "";
+  list.innerHTML = `<div class="output-empty">读取中…</div>`;
+  try {
+    const data = await api("/api/output/runs");
+    state.outputArchive = data.runs || [];
+    total.textContent = `${state.outputArchive.length} 集 · 共 ${formatSize(data.totalBytes || 0)}`;
+    list.innerHTML = state.outputArchive.length
+      ? state.outputArchive.map(archiveRow).join("")
+      : `<div class="output-empty">output 目录是空的</div>`;
+  } catch (error) {
+    total.textContent = "读取失败";
+    list.innerHTML = `<div class="output-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+/**
+ * 一行历史成品。删除做成**行内两段式**，不用 window.confirm。
+ *
+ * 原来这里弹的是原生 confirm()，在内嵌 webview 里会被直接掐掉 ——
+ * 控制台只留一句 "Page dialog suppressed…, confirm() returned false"，
+ * 而对页面来说 confirm() 就是返回了 false，于是「点了删除毫无反应」。
+ * 用户看到的是功能坏了，代码里却没有任何报错。
+ * 行内确认不依赖宿主环境的任何能力，到哪都一样。
+ */
+function archiveRow(run) {
+  const 媒体占比 = run.bytes ? Math.round((run.mediaBytes / run.bytes) * 100) : 0;
+  const detail = `${run.date} · ${formatSize(run.bytes)} · ${run.files} 个文件 · 音视频占 ${媒体占比}%`;
+  const rel = escapeHtml(run.relPath);
+  const 待确认 = state.archiveConfirming === run.relPath;
+  const actions = 待确认
+    // 确认态要重复一遍后果：这一步之后就没有回收站了
+    ? `<span class="archive-warn">整个目录删掉，不可恢复</span>
+       <button data-archive-yes="${rel}" class="danger">确认删除</button>
+       <button data-archive-no="${rel}">取消</button>`
+    : `<button data-archive-ask="${rel}" class="danger">删除</button>`;
+  return `<div class="output-item${待确认 ? " confirming" : ""}">
+    <div><strong>${escapeHtml(run.title)}</strong><span>${escapeHtml(detail)}</span></div>
+    <div class="output-actions">${actions}</div>
+  </div>`;
+}
+
+/** 只切确认态并重画列表，不碰服务端。 */
+function setArchiveConfirming(relPath) {
+  state.archiveConfirming = relPath;
+  const list = $("outputArchive");
+  list.innerHTML = (state.outputArchive || []).length
+    ? state.outputArchive.map(archiveRow).join("")
+    : `<div class="output-empty">output 目录是空的</div>`;
+}
+
+/** 真的删。到这一步说明用户已经在行内点过「确认删除」。 */
+async function deleteArchivedRun(relPath) {
+  state.archiveConfirming = "";
+  try {
+    const result = await api("/api/output/runs", {
+      method: "DELETE",
+      body: JSON.stringify({ relPath })
+    });
+    toast(`已删除，腾出 ${formatSize(result.deletedBytes)}`);
+    await loadOutputArchive();
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+}
+
 function persistOutputs() {
   renderOutputs();
 }
@@ -1266,6 +1345,29 @@ function fillVideoSettings() {
   if (radio) radio.checked = true;
 }
 
+/**
+ * 文本引擎 API Key 的状态 / 保存 / 删除。
+ *
+ * 2026-08-14 补上。在此之前这一块**根本没有界面**：
+ * 后端的 /api/text/key（写 macOS 钥匙串）一直在，但前端从没调过它；
+ * 而每个步骤那行里的「API Key」输入框是假的 —— renderProviderSettings 里
+ * 明确跳过它不自动保存，persistProvider 又 `delete provider.apiKey`，
+ * 于是你输进去的 key 走不到任何地方，刷新就没。
+ * 占位符还写着「已安全保存，可留空」，实际上什么都没保存。
+ * 用户的说法是「每次都得重新保存」，其实是**一次都没保存成功过**。
+ */
+async function loadTextKeyStatus() {
+  const node = $("textKeyStatus");
+  try {
+    const status = await api("/api/text/key-status");
+    node.textContent = status.configured
+      ? (status.source === "environment" ? "已通过环境变量配置" : "已保存到 macOS 钥匙串")
+      : "尚未保存";
+  } catch (error) {
+    node.textContent = `读取失败：${error.message}`;
+  }
+}
+
 async function loadMinimaxStatus() {
   const mode = document.querySelector('input[name="minimaxDeliveryMode"]:checked')?.value || state.config?.minimax?.deliveryMode || "subscription";
   const status = await api(`/api/minimax/key-status?mode=${encodeURIComponent(mode)}`);
@@ -1414,8 +1516,9 @@ async function refreshAll() {
   showDraftPublisherStatus(status.runtime.publisher || {});
   fillMinimax();
   fillVideoSettings();
-  const [, , , topicHistory] = await Promise.all([
+  const [, , , , topicHistory] = await Promise.all([
     loadMinimaxStatus(),
+    loadTextKeyStatus(),
     loadMediaLibrary("bgm"),
     loadMediaLibrary("video"),
     api("/api/topic-history")
@@ -1554,10 +1657,47 @@ $("toggleMinimaxKey").addEventListener("click", () => {
   input.type = input.type === "password" ? "text" : "password";
   $("toggleMinimaxKey").textContent = input.type === "password" ? "显示" : "隐藏";
 });
+$("toggleTextKey").addEventListener("click", () => {
+  const input = $("textApiKey");
+  const 隐藏中 = input.type === "password";
+  input.type = 隐藏中 ? "text" : "password";
+  $("toggleTextKey").textContent = 隐藏中 ? "隐藏" : "显示";
+});
+$("saveTextKey").addEventListener("click", async () => {
+  const key = $("textApiKey").value.trim();
+  if (!key) return toast("请粘贴 API Key");
+  try {
+    await api("/api/text/key", { method: "PUT", body: JSON.stringify({ apiKey: key }) });
+    // 存完就把输入框清空并遮回去：让明文 key 一直躺在页面上没有任何好处
+    $("textApiKey").value = "";
+    $("textApiKey").type = "password";
+    $("toggleTextKey").textContent = "显示";
+    await loadTextKeyStatus();
+    toast("文本引擎 Key 已保存到钥匙串");
+  } catch (error) {
+    toast(`保存失败：${error.message}`);
+  }
+});
+$("deleteTextKey").addEventListener("click", async () => {
+  try {
+    await api("/api/text/key", { method: "DELETE" });
+    await loadTextKeyStatus();
+    toast("已删除");
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+});
+
 $("saveMinimaxKey").addEventListener("click", async () => {
   const key = $("minimaxApiKey").value.trim();
   if (!key) return toast("请粘贴 API Key");
-  const mode = document.querySelector('input[name="minimaxDeliveryMode"]:checked')?.value || "subscription";
+  // 兜底必须跟着 config.minimax.deliveryMode 走，不能硬编码 "subscription"。
+  // 页面刚载入、用户还没点过单选框时 :checked 是 null；原来这里直接退回
+  // "subscription"，于是 key 被存进订阅槽，而合成读的是 deliveryMode 指定的
+  // api 槽 —— 存了等于没存，界面还一直显示「尚未保存」。
+  const mode = document.querySelector('input[name="minimaxDeliveryMode"]:checked')?.value
+    || state.config?.minimax?.deliveryMode
+    || "subscription";
   await api("/api/minimax/key", { method: "PUT", body: JSON.stringify({ apiKey: key, mode }) });
   $("minimaxApiKey").value = "";
   $("minimaxApiKey").type = "password";
@@ -1566,7 +1706,13 @@ $("saveMinimaxKey").addEventListener("click", async () => {
   toast(mode === "subscription" ? "订阅 Key 已保存" : "普通 API Key 已保存");
 });
 $("deleteMinimaxKey").addEventListener("click", async () => {
-  const mode = document.querySelector('input[name="minimaxDeliveryMode"]:checked')?.value || "subscription";
+  // 兜底必须跟着 config.minimax.deliveryMode 走，不能硬编码 "subscription"。
+  // 页面刚载入、用户还没点过单选框时 :checked 是 null；原来这里直接退回
+  // "subscription"，于是 key 被存进订阅槽，而合成读的是 deliveryMode 指定的
+  // api 槽 —— 存了等于没存，界面还一直显示「尚未保存」。
+  const mode = document.querySelector('input[name="minimaxDeliveryMode"]:checked')?.value
+    || state.config?.minimax?.deliveryMode
+    || "subscription";
   if (!window.confirm(`确定删除 MiniMax ${mode === "subscription" ? "订阅 Key" : "普通 API Key"}吗？`)) return;
   await api("/api/minimax/key", { method: "DELETE", body: JSON.stringify({ mode }) });
   await loadMinimaxStatus();
@@ -1771,6 +1917,16 @@ $("stageList").addEventListener("click", async (event) => {
   if (openButton) openOutputFile(openButton.dataset.openFile, false);
   if (revealButton) openOutputFile(revealButton.dataset.revealFile, true);
 });
+
+$("outputArchive").addEventListener("click", (event) => {
+  const ask = event.target.closest("[data-archive-ask]");
+  const yes = event.target.closest("[data-archive-yes]");
+  const no = event.target.closest("[data-archive-no]");
+  if (ask) setArchiveConfirming(ask.dataset.archiveAsk);
+  if (no) setArchiveConfirming("");
+  if (yes) deleteArchivedRun(yes.dataset.archiveYes);
+});
+$("reloadOutputArchive").addEventListener("click", loadOutputArchive);
 
 $("outputList").addEventListener("click", (event) => {
   const openButton = event.target.closest("[data-open-file]");

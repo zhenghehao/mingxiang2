@@ -5,8 +5,9 @@
  * 在页面上跑完六步再把结果交回来。那意味着出片全程必须有一个页面开着并且活着 ——
  * 页面一关、一崩、一刷新，任务就变成没人认领的孤儿（2026-07-27 就是这么挂的）。
  *
- * 读完那份 HTML 的结论是：整条流水线没有一处真的需要浏览器。六个阶段
- * （提示词 → 生图 → 评分 → 运动词 → 生视频 → 合成）全是 HTTP 调用，
+ * 读完那份 HTML 的结论是：整条流水线没有一处真的需要浏览器。各个阶段
+ * （提示词 → 生图 → 运动词 → 生视频 → 合成）全是 HTTP 调用，
+ * （2026-08-14 起「评分」那一阶段已删除，见 generateAgnesVisualsHeadless）
  * 合成那步本来就已经在 Node 里（cors-proxy.js 的 compose）。唯一沾浏览器的是
  * imgToThumb 用 canvas 缩图，这里换成 ffmpeg —— 项目里本来就带着它。
  *
@@ -21,8 +22,8 @@ import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CancelledError, resolveMediaBinary } from "./media.mjs";
-import { SKILL_DIRECTOR, SKILL_MOTION, SKILL_JUDGE } from "./agnes-prompts.mjs";
+import { CancelledError, makeSeamlessLoop, resolveMediaBinary } from "./media.mjs";
+import { SKILL_DIRECTOR, SKILL_MOTION } from "./agnes-prompts.mjs";
 
 // 2026-07-29 实测。Agnes 有两套互不相通的入口，域名、令牌、模型名三样全不同，
 // 换一套就得三样一起换 —— 只改域名会 401，只改模型名会 503。
@@ -38,11 +39,22 @@ const DEFAULTS = {
   textModel: "agnes-2.5-flash",
   imgModel: "agnes-image-2.1-flash",
   vidModel: "agnes-video-v2.0",
+  // 导演（文稿 → N 段场景提示词）这一步**不看图**，所以没必要占着 Agnes 的
+  // 多模态额度和 key。留空 = 照旧走 Agnes（baseUrl + apiKeys + textModel），
+  // 填了 URL 且拿得到 key 才切过去 —— 配一半不会把流水线搞挂，只会退回原路。
+  // directorKeys 留空时自动借用 scorerKeys：同一家 SenseNova、同一个账号，
+  // 没必要逼人再配第三份 key。
+  directorUrl: "",
+  directorModel: "",
+  directorKeys: [],
   scorerUrl: "https://token.sensenova.cn/v1",
   scorerModel: "sensenova-6.7-flash-lite",
   motionUrl: "https://token.sensenova.cn/v1",
   motionModel: "sensenova-6.7-flash-lite",
   loopMode: "loop",
+  // 循环接缝的交叉淡化秒数。0 = 关掉（直接用模型给的原片）。
+  // 实测 0.4 秒最好，拉长到 0.8/1.2 秒没有改善，反而更糊。
+  loopFadeSeconds: 0.4,
   candidateCount: 6,
   reservedForVideo: 3,
   // 实测一条 5 秒循环视频从提交到 completed 约 127 秒，排队时长会浮动，
@@ -70,12 +82,17 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 // 另外记一笔：实测 agnes-image-2.1-flash **基本不理会 negative_prompt** ——
 // 同一提示词给与不给负面词，出图几乎一模一样。真正管用的是正面提示词。
 // 这行留着是为了以后换模型时它可能重新生效，但别指望它挡住什么。
-const IMAGE_NEGATIVE = "clouds,cloud,sky only,smoke,incense,smoky,ink,inkstone,"
+export const IMAGE_NEGATIVE = "clouds,cloud,sky only,smoke,incense,smoky,ink,inkstone,"
   + "calligraphy,ink brush,scroll,rice paper,bright,overexposed,high contrast";
 const VIDEO_NEGATIVE = "camera movement,camera pan,camera zoom,camera shake,static image,frozen,"
   + "no motion,text,watermark,distorted";
 const MOTION_FALLBACK = "Camera completely static and locked, gentle slow in-place natural motion "
   + "of water/mist/light, seamless loop, calm breathing rhythm.";
+
+// settings() 也导出：tools/visual-dryrun.mjs 要用同一套 key 分池和默认值跑空跑，
+// 自己再搭一套等于测的不是生产代码。改名导出是因为 "settings" 在别人的模块
+// 命名空间里太泛，看不出是谁的设置。
+export { settings as resolveAgnesSettings };
 
 export function agnesHeadlessEnabled(config) {
   return Boolean(config?.agnesHeadless?.enabled);
@@ -138,6 +155,8 @@ function settings(config = {}) {
     motionUrl: String(merged.motionUrl || "").replace(/\/$/, ""),
     scorerKeys: clean(merged.scorerKeys),
     motionKeys: clean(merged.motionKeys),
+    directorUrl: String(merged.directorUrl || "").replace(/\/$/, ""),
+    directorKeys: clean(merged.directorKeys).length ? clean(merged.directorKeys) : clean(merged.scorerKeys),
     coverPath: resolveCoverPath(merged.coverPath),
     candidateCount: Math.max(1, Math.min(12, Number(merged.candidateCount) || DEFAULTS.candidateCount))
   };
@@ -308,16 +327,91 @@ async function imgToThumb(config, url, maxSide, quality, { signal, workDir } = {
  * 解析失败必须把原文带出来。以前只报一句「Expected ':' at position 2561」，
  * 而那个位置指的是模型输出、不是任何一个文件，光看报错完全无从下手。
  */
-async function generatePrompts(agnes, article, count, { signal, note }) {
-  const tries = Math.max(3, Math.min(4, agnes.apiKeys.length));
+export function resolveDirectorEndpoint(agnes) {
+  // 两个都齐了才切走。只填 URL 不给 key，或反过来，都退回 Agnes ——
+  // 半套配置让整条流水线在第一步就死，比"没换成"糟得多。
+  if (agnes.directorUrl && agnes.directorKeys?.length) {
+    return {
+      url: `${agnes.directorUrl}/chat/completions`,
+      keys: agnes.directorKeys,
+      model: agnes.directorModel || agnes.textModel,
+      label: "独立导演端点"
+    };
+  }
+  return {
+    url: `${agnes.baseUrl}/v1/chat/completions`,
+    keys: agnes.apiKeys,
+    model: agnes.textModel,
+    label: "Agnes 网关"
+  };
+}
+
+/**
+ * 判断一条失败是不是「内容审核拒了」。
+ *
+ * 这类失败和限流、超时不是一回事：重试同一条提示词永远还是被拒，
+ * 必须**换措辞重写**才有机会过。所以要单独认出来。
+ */
+export function isContentPolicyFailure(message) {
+  return /content_policy_violation|Unable to generate this content/i.test(String(message || ""));
+}
+
+/**
+ * 补生一条场景：让导演换个完全不同的意象重写。
+ *
+ * 【注意：这是**兜底**，不是首选】
+ * 2026-08-14 实测推翻了最初的判断。原本以为内容审核是针对特定措辞的，
+ * 因为连续四轮每轮都恰好掉一条、且集中在雨夜巷子那类题材。
+ * 但把其中一条被拒过的提示词**原样**再打 6 次，6 次全过。
+ * 结论：这个拒绝是随机的瞬时行为，和写了什么无关。
+ *
+ * 所以正确的处理顺序是「先原样重试，重试还不行才换措辞」——
+ * 原样重试能保住导演本来想要的那个场景，也省一次导演调用。
+ * 这个函数只在原样重试也失败时才用，那时才有理由怀疑提示词本身有问题。
+ */
+export async function regenerateScene(agnes, article, rejected, { signal, note, keyIndex = 0 } = {}) {
+  const endpoint = resolveDirectorEndpoint(agnes);
+  const response = await fetchRetry(endpoint.url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${pick(endpoint.keys, keyIndex)}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: endpoint.model,
+      messages: [
+        { role: "system", content: SKILL_DIRECTOR(1) },
+        {
+          role: "user",
+          content: `文章内容：\n${article}\n\n`
+            + `【重要】下面这个场景被图像/视频服务的内容审核拒绝了，请**换一个完全不同的场景**重写一条。\n`
+            + `不要沿用它的地点、意象和措辞，换一个方向（比如它写的是雨夜巷弄，就换成水边、林间或室内烛光这类完全不同的画面）。\n`
+            + `被拒绝的标题：${rejected.title}\n`
+            + `被拒绝的提示词：${rejected.imagePrompt}`
+        }
+      ],
+      max_tokens: 4096,
+      temperature: 0.9
+    })
+  }, { retries: 2, signal, onNote: note });
+  if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
+  const list = extractJSON(llmContent(await response.json()));
+  const one = Array.isArray(list) ? list[0] : list;
+  if (!one?.image_prompt) throw new Error("补生的场景里没有 image_prompt");
+  return { title: one.title || rejected.title, imagePrompt: one.image_prompt };
+}
+
+export async function generatePrompts(agnes, article, count, { signal, note } = {}) {
+  const endpoint = resolveDirectorEndpoint(agnes);
+  const tries = Math.max(3, Math.min(4, endpoint.keys.length));
   let lastError = "";
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
-      const response = await fetchRetry(`${agnes.baseUrl}/v1/chat/completions`, {
+      const response = await fetchRetry(endpoint.url, {
         method: "POST",
-        headers: { Authorization: `Bearer ${pick(agnes.apiKeys, attempt)}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${pick(endpoint.keys, attempt)}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: agnes.textModel,
+          model: endpoint.model,
           messages: [
             { role: "system", content: SKILL_DIRECTOR(count, agnes.loopMode) },
             { role: "user", content: `文章内容：\n${article}` }
@@ -348,10 +442,10 @@ async function generatePrompts(agnes, article, count, { signal, note }) {
       lastError = error.message;
     }
   }
-  throw new Error(`提取场景失败（试了 ${tries} 次）：${lastError}`);
+  throw new Error(`提取场景失败（${endpoint.label} / ${endpoint.model}，试了 ${tries} 次）：${lastError}`);
 }
 
-async function genSingleImage(agnes, prompt, keyIndex, { signal, note }) {
+export async function genSingleImage(agnes, prompt, keyIndex, { signal, note } = {}) {
   // 先用分给自己的那把，失败后依次换待命池里的 —— 那几把首轮没人碰过，
   // 限流窗口是干净的。待命池为空时退回原来的行为（在主池里轮换）。
   const candidates = [
@@ -393,67 +487,21 @@ async function genSingleImage(agnes, prompt, keyIndex, { signal, note }) {
 }
 
 /**
- * 评委：把全部候选图打包进同一个请求，选出最佳。
- * 三级降采样 + 换 key 的兜底照搬原实现 —— 这一步是整条链上最容易被撑爆的。
+ * keyIndex：这一张图从 motionKeys 的第几把开始取。和 genVideo 的同名参数同一个道理。
+ *
+ * 原来这里恒从 0 开始（`motionKeys[ki]`，ki 是**换 key 重试**的序号）。
+ * 只给一张图写运动词时没问题；一旦 N 张图并行各写各的，N 个调用会同时抓
+ * motionKeys[0] —— 后面几把从头到尾闲着，而第一把被 N 倍的量砸中。
+ * SenseNova 那边是按 token/分钟算的（超了报 inference tpm exhausted），
+ * 所以「多给几把 key」这件事必须在这里生效，否则加再多也只用得上第一把。
  */
-async function scoreImages(config, agnes, urls, articleText, { signal, note, workDir }) {
-  if (!agnes.scorerUrl || !agnes.scorerKeys.length) throw new Error("未配置评委 AI");
-  const sizes = [[512, 0.85], [384, 0.78], [256, 0.7]];
-  let lastError = "";
-  for (let ki = 0; ki < agnes.scorerKeys.length; ki += 1) {
-    const key = agnes.scorerKeys[ki];
-    try {
-      for (const [maxSide, quality] of sizes) {
-        const thumbs = await Promise.all(
-          urls.map((u) => imgToThumb(config, u, maxSide, quality, { signal, workDir }))
-        );
-        const content = [{
-          type: "text",
-          text: `原文文章（判断画面是否符合文章描述的季节/天气/场景时参考）：\n${(articleText || "").slice(0, 1500)}\n\n`
-            + `共 ${urls.length} 张候选，请务必先逐张放大检查画质(有无雪花噪点/花屏/畸变纹路/发糊)，再打分并选最佳。`
-        }];
-        for (const b64 of thumbs) content.push({ type: "image_url", image_url: { url: b64 } });
-        const response = await fetchRetry(`${agnes.scorerUrl}/chat/completions`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: agnes.scorerModel,
-            messages: [{ role: "system", content: SKILL_JUDGE(urls.length) }, { role: "user", content }],
-            max_tokens: 16000,
-            temperature: 0.3,
-            reasoning_effort: "none"
-          })
-        }, { retries: 2, signal, onNote: note });
-        if (response.status === 413) { lastError = "413 请求过大，缩小图片重试"; continue; }
-        if (!response.ok) { lastError = `HTTP ${response.status}: ${(await response.text()).slice(0, 120)}`; break; }
-        const payload = await response.json();
-        const finish = payload.choices?.[0]?.finish_reason;
-        let parsed;
-        try {
-          parsed = extractJSON(llmContent(payload));
-        } catch (parseError) {
-          if (finish === "length") { lastError = "输出被截断，缩小图片重试"; continue; }
-          lastError = `解析失败：${parseError.message}`;
-          break;
-        }
-        let best = Number.isInteger(parsed.best) ? parsed.best : 0;
-        if (best < 0 || best >= urls.length) best = 0;
-        return { scores: parsed.scores || [], best, bestReason: parsed.best_reason || "" };
-      }
-    } catch (error) {
-      if (error?.cancelled) throw error;
-      lastError = error.message;
-    }
-  }
-  throw new Error(`评委全部 ${agnes.scorerKeys.length} 个 key 都失败：${lastError}`);
-}
-
-async function writeMotionPrompt(config, agnes, imageUrl, { signal, note, workDir }) {
+export async function writeMotionPrompt(config, agnes, imageUrl, { signal, note, workDir, keyIndex = 0 } = {}) {
   if (!agnes.motionUrl || !agnes.motionKeys.length) throw new Error("未配置运动导演 AI");
   const sizes = [[896, 0.9], [640, 0.82]];
   let lastError = "";
   for (let ki = 0; ki < agnes.motionKeys.length; ki += 1) {
-    const key = agnes.motionKeys[ki];
+    // 从分给自己的那把起轮转：第 n 张图先用第 n 把，失败才依次换下一把
+    const key = pick(agnes.motionKeys, keyIndex + ki);
     for (const [maxSide, quality] of sizes) {
       const b64 = await imgToThumb(config, imageUrl, maxSide, quality, { signal, workDir });
       const response = await fetchRetry(`${agnes.motionUrl}/chat/completions`, {
@@ -550,7 +598,15 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
   throw new Error(`视频生成轮询超时（等了 ${waited} 秒）${lastError ? `，最后一次错误：${lastError}` : "，期间状态一直不是 completed"}`);
 }
 
-async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick }) {
+/**
+ * keyIndex：这一条视频从 videoKeys 的第几把开始取。
+ *
+ * 原来这里写死从 0 开始（`pick(videoKeys, attempt)`，attempt 是**重试**次数）。
+ * 单条视频时没问题；一旦要并行出 N 条，N 个调用会在第一次尝试时全部抓同一把 key，
+ * 而视频那边是「每分钟 2 次」的硬限流 —— 等于自己把自己打成 429，
+ * 然后每条各等 65 秒。并行出 6 条的方案就是被这一行挡住的。
+ */
+export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick, keyIndex = 0 } = {}) {
   const body = agnes.loopMode !== "free"
     ? {
       model: agnes.vidModel, prompt: videoPrompt, width: 720, height: 1280,
@@ -570,7 +626,7 @@ async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick }) 
       const response = await fetchRetry(`${agnes.baseUrl}/v1/videos`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${pick(agnes.videoKeys, attempt)}`,
+          Authorization: `Bearer ${pick(agnes.videoKeys, keyIndex + attempt)}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify(body)
@@ -583,14 +639,14 @@ async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick }) 
       const taskId = payload.id || payload.task_id || "";
       if (!videoId && taskId) {
         const lookup = await fetch(`${agnes.baseUrl}/v1/videos/${encodeURIComponent(taskId)}`, {
-          headers: { Authorization: `Bearer ${pick(agnes.videoKeys, attempt)}` },
+          headers: { Authorization: `Bearer ${pick(agnes.videoKeys, keyIndex + attempt)}` },
           signal
         });
         if (lookup.ok) videoId = (await lookup.json()).video_id || "";
       }
       if (!videoId) { lastError = `未能取得 video_id（task_id=${taskId || "空"}）`; continue; }
       // 轮询必须用真正提交成功的那个 key，不能还用最初分配的
-      usedKey = attempt;
+      usedKey = keyIndex + attempt;
       break;
     } catch (error) {
       if (error?.cancelled) throw error;
@@ -613,8 +669,30 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, on
   const outCover = path.join(outputDir, `${id}_cover.mp4`);
   await download(videoUrl, tmpIn, signal, { expectMedia: true });
 
-  // 1) 纯循环视频，去音（视频流直接 copy，无损最快）
-  await runFfmpeg(ffmpeg, ["-y", "-i", tmpIn, "-an", "-c:v", "copy", "-movflags", "+faststart", outPlain], signal);
+  // 0) 先把首尾接缝抹平（2026-08-14 接入）。
+  //
+  // 生视频那边虽然用 keyframes 模式把同一张图同时喂给首帧和尾帧，但模型只是
+  // 「尽量」回到原样，做不到逐像素一致。实测五条片子接缝跳变比片内正常帧间跳变
+  // 差 1.4~11.0 dB，画面越安静的越明显。而这段 5 秒循环片在成品里要重复几百遍
+  // ——接缝差一点，观众就要看它顿几百次。所以在这里过一道，之后所有产物都是干净的。
+  //
+  // 失败不致命：抹不平就用原片，顶多接缝还在，不该让整条流水线为此挂掉。
+  const fade = Number(agnes.loopFadeSeconds ?? 0.4);
+  let source = tmpIn;
+  if (fade > 0) {
+    const seamless = path.join(workDir, `med_loop_${id}.mp4`);
+    try {
+      const r = await makeSeamlessLoop(config, tmpIn, seamless, { fadeSeconds: fade, signal });
+      source = seamless;
+      onNote?.(`已抹平循环接缝：${r.sourceDuration.toFixed(2)}s → ${r.loopDuration.toFixed(2)}s（交叉 ${r.fadeSeconds}s）`);
+    } catch (error) {
+      if (error?.cancelled) throw error;
+      onNote?.(`⚠ 循环接缝处理失败，改用原片（接缝可能可见）：${error.message}`);
+    }
+  }
+
+  // 1) 纯循环视频，去音。source 已经是编码过的，直接 copy 不必再压一遍。
+  await runFfmpeg(ffmpeg, ["-y", "-i", source, "-an", "-c:v", "copy", "-movflags", "+faststart", outPlain], signal);
 
   // 2) 固定封面淡出 + 去音。scale2ref 让封面自动缩放到视频尺寸（不写死分辨率）。
   //    封面前 1 秒完整显示，第 1→3 秒淡出，之后纯视频。
@@ -630,7 +708,7 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, on
   }
   if (hasCover) {
     await runFfmpeg(ffmpeg, [
-      "-y", "-i", tmpIn, "-loop", "1", "-i", coverPath,
+      "-y", "-i", source, "-loop", "1", "-i", coverPath,
       "-filter_complex",
       "[1:v][0:v]scale2ref=w=iw:h=ih[cov][base];"
       + "[cov]format=yuva420p,fade=t=out:st=1:d=2:alpha=1[covf];"
@@ -649,7 +727,26 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, on
  * 返回结构与 agnes.mjs 的 generateAgnesVisuals 一致：
  * { jobId, coverPath, loopPath, selectedTitle, selectedReason }
  */
-export async function generateAgnesVisualsHeadless(config, { article, title = "", onProgress, signal } = {}) {
+/**
+ * 跑完整条视觉流水线。
+ *
+ * 2026-08-14 改：**评委已删除**。
+ *
+ * 原来是「N 张图 → 评委看图打分选 1 张 → 只给那张写运动词 → 只出 1 条视频」，
+ * 于是另外 N-1 张图白生成、白花钱，最终画面由模型替人选。现在改成
+ * 「N 张图 → 每张各写各的运动词 → 每张各出一条视频 → N 条全留下」，
+ * 挑哪条由人来定（pickIndex），模型不再代劳。
+ *
+ * 每张图的运动词和视频都用**自己那一把 key**（keyIndex），否则 N 路并行会
+ * 全挤在第 0 把上，把自己打成 429 —— 这也是这个方案以前做不成的技术障碍。
+ *
+ * pickIndex 决定最终成片用哪一条；不传就用第 0 条，这样调用方不改也能跑。
+ * 返回值里 coverPath / loopPath 指向被选中的那条（沿用旧字段名，
+ * workflow.mjs 不用动），candidates 里是全部 N 条，供界面挑选。
+ */
+export async function generateAgnesVisualsHeadless(config, {
+  article, title = "", onProgress, signal, pickIndex
+} = {}) {
   const agnes = settings(config);
   const ensureLive = () => { if (signal?.aborted) throw new CancelledError(); };
   const jobId = `agnes-local-${Date.now()}`;
@@ -663,7 +760,7 @@ export async function generateAgnesVisualsHeadless(config, { article, title = ""
   await Promise.all([mkdir(outputDir, { recursive: true }), mkdir(workDir, { recursive: true })]);
 
   try {
-    // 1) 提示词
+    // 1) 文稿 → N 段场景提示词
     ensureLive();
     report("prompts", 5, "正在从冥想文稿提炼视觉场景");
     const prompts = await generatePrompts(agnes, article, agnes.candidateCount, { signal, note });
@@ -673,9 +770,9 @@ export async function generateAgnesVisualsHeadless(config, { article, title = ""
       imagePrompt: p.image_prompt
     }));
 
-    // 2) 候选图并行。单张失败只是少一个候选，不影响整体 —— 全挂才算失败。
+    // 2) N 张图并行。单张失败只是少一个候选，全挂才算失败。
     ensureLive();
-    report("images", 20, `正在并行生成 ${items.length} 张候选图`);
+    report("images", 15, `正在并行生成 ${items.length} 张画面`);
     await Promise.all(items.map((item, i) => genSingleImage(agnes, item.imagePrompt, i, { signal, note })
       .then((url) => { item.imageUrl = url; })
       .catch((error) => {
@@ -684,60 +781,149 @@ export async function generateAgnesVisualsHeadless(config, { article, title = ""
       })));
     const withImage = items.filter((item) => item.imageUrl);
     if (!withImage.length) throw new Error("候选图全部生成失败");
-    report("images", 45, `候选图完成 ${withImage.length}/${items.length}`);
+    report("images", 35, `画面完成 ${withImage.length}/${items.length}`);
 
-    // 3) 评分。挂了就退回第一张，不让它带走整条流程。
+    // 3) 每张图各写各的运动词。并行，各用一把 key。
+    //    单张写失败不致命 —— 退回通用运动词，这一条照样能出视频。
     ensureLive();
-    let best = withImage[0];
-    let bestReason = "";
-    if (agnes.scorerUrl && agnes.scorerKeys.length && withImage.length > 1) {
-      report("scoring", 55, "正在评分并选择最佳画面");
+    report("motion", 45, `正在为 ${withImage.length} 张画面分别编写运动提示词`);
+    await Promise.all(withImage.map(async (item, n) => {
+      if (!agnes.motionUrl || !agnes.motionKeys.length) { item.motion = MOTION_FALLBACK; return; }
       try {
-        const result = await scoreImages(
-          config, agnes, withImage.map((item) => item.imageUrl), article, { signal, note, workDir }
-        );
-        best = withImage[result.best] || withImage[0];
-        bestReason = result.bestReason;
+        item.motion = await writeMotionPrompt(config, agnes, item.imageUrl, {
+          signal, note, workDir, keyIndex: n
+        });
       } catch (error) {
         if (error?.cancelled) throw error;
-        report("scoring", 55, `评分失败，改用第一张候选：${error.message}`);
+        item.motion = MOTION_FALLBACK;
+        item.motionError = error.message;
+      }
+    }));
+
+    // 4) 每张图各出一条循环视频。并行，各用一把 key。
+    ensureLive();
+    report("video", 55, `正在并行生成 ${withImage.length} 条循环视频`);
+    let 完成 = 0;
+    await Promise.all(withImage.map(async (item, n) => {
+      try {
+        const url = await genVideo(agnes, item.imageUrl, item.motion, {
+          signal, note, keyIndex: n,
+          onTick: (text) => report("video", 60, `第 ${item.scene} 条 · ${text}`)
+        });
+        item.videoUrl = url;
+        完成 += 1;
+        report("video", 60 + Math.round((完成 / withImage.length) * 25),
+          `循环视频完成 ${完成}/${withImage.length}`);
+      } catch (error) {
+        if (error?.cancelled) throw error;
+        item.videoError = error.message;
+      }
+    }));
+    let withVideo = withImage.filter((item) => item.videoUrl);
+
+    // 4b) 被内容审核拦掉的，换个说法补生一条。
+    //
+    // 只补**内容审核**这一类：限流、超时重试原提示词就行，而被审核拒的
+    // 重试多少次都是同一个结果，必须换意象。只跑一轮 —— 补生也可能再被拒，
+    // 无限补下去会把时间和额度烧光，而少一条候选并不致命。
+    const 被拒 = items.filter((item) =>
+      (item.imageError && isContentPolicyFailure(item.imageError))
+      || (item.videoError && isContentPolicyFailure(item.videoError)));
+    if (被拒.length && withVideo.length < agnes.candidateCount) {
+      ensureLive();
+      report("video", 84, `${被拒.length} 条被内容审核拒绝，正在重试补生`);
+      const 补 = await Promise.all(被拒.map(async (bad, n) => {
+        const slot = withImage.length + n;
+        try {
+          // 先原样重试。实测这个拒绝是随机的（同一条提示词打 6 次全过），
+          // 所以多半换把 key 重来一次就成了，还能保住导演本来想要的场景。
+          let item = { scene: bad.scene, title: bad.title, imagePrompt: bad.imagePrompt };
+          try {
+            item.imageUrl = await genSingleImage(agnes, item.imagePrompt, slot, { signal, note });
+            note?.(`「${bad.title}」原样重试通过`);
+          } catch (again) {
+            if (again?.cancelled) throw again;
+            // 原样重试还是不行，这才有理由怀疑提示词本身，换个意象重写
+            note?.(`「${bad.title}」原样重试仍被拒，改为换意象重写`);
+            const fresh = await regenerateScene(agnes, article, bad, { signal, note, keyIndex: n + 1 });
+            item = { scene: bad.scene, title: fresh.title, imagePrompt: fresh.imagePrompt, regenerated: true };
+            item.imageUrl = await genSingleImage(agnes, item.imagePrompt, slot + 1, { signal, note });
+          }
+          item.motion = (agnes.motionUrl && agnes.motionKeys.length)
+            ? await writeMotionPrompt(config, agnes, item.imageUrl, {
+              signal, note, workDir, keyIndex: slot
+            }).catch(() => MOTION_FALLBACK)
+            : MOTION_FALLBACK;
+          item.videoUrl = await genVideo(agnes, item.imageUrl, item.motion, {
+            signal, note, keyIndex: slot,
+            onTick: (text) => report("video", 86, `补生「${item.title}」· ${text}`)
+          });
+          return item;
+        } catch (error) {
+          if (error?.cancelled) throw error;
+          note?.(`补生「${bad.title}」仍未通过：${String(error.message).slice(0, 80)}`);
+          return null;
+        }
+      }));
+      const 成功 = 补.filter(Boolean);
+      if (成功.length) {
+        withVideo = [...withVideo, ...成功];
+        report("video", 87, `补生成功 ${成功.length}/${被拒.length} 条`);
       }
     }
 
-    // 4) 运动词。同样非致命，有兜底词。
+    if (!withVideo.length) throw new Error("循环视频全部生成失败");
+
+    // 5) 每条都合成落地，人挑之前得先看得见。
     ensureLive();
-    let videoPrompt = MOTION_FALLBACK;
-    if (agnes.motionUrl && agnes.motionKeys.length) {
-      report("motion", 62, "正在编写循环运动提示词");
+    report("done", 88, `正在整理 ${withVideo.length} 条候选视频`);
+    await Promise.all(withVideo.map(async (item) => {
       try {
-        videoPrompt = await writeMotionPrompt(config, agnes, best.imageUrl, { signal, note, workDir });
+        const composed = await compose(config, agnes, item.videoUrl, outputDir, { signal, workDir, onNote: note });
+        item.loopPath = composed.plainPath;
+        item.coverPath = composed.coverPath;
+        item.hasCover = composed.hasCover;
       } catch (error) {
         if (error?.cancelled) throw error;
-        report("motion", 62, `运动词生成失败，改用通用运动词：${error.message}`);
+        item.composeError = error.message;
       }
-    }
+    }));
+    const candidates = withVideo.filter((item) => item.loopPath);
+    if (!candidates.length) throw new Error("候选视频全部合成失败");
 
-    // 5) 生视频。这一步失败就是整条失败 —— 没有它就没有成品。
-    ensureLive();
-    report("video", 70, "正在生成循环视频");
-    const videoUrl = await genVideo(agnes, best.imageUrl, videoPrompt, {
-      signal,
-      note,
-      onTick: (text) => report("video", 78, `正在生成循环视频 · ${text}`)
-    });
-
-    // 6) 合成
-    ensureLive();
-    report("done", 92, "正在整理两段视觉成品");
-    const composed = await compose(config, agnes, videoUrl, outputDir, { signal, workDir, onNote: note });
-    report("done", 100, composed.hasCover ? "视觉成品已完成（片头带封面）" : "视觉成品已完成（无片头封面）");
+    // 6) 选一条给下游。没指定就第 0 条 —— 调用方不改也能跑通。
+    const index = Number.isInteger(pickIndex) && pickIndex >= 0 && pickIndex < candidates.length
+      ? pickIndex
+      : 0;
+    const picked = candidates[index];
+    report("done", 100, `视觉候选已完成 ${candidates.length} 条，本次采用第 ${index + 1} 条`);
 
     return {
       jobId,
-      coverPath: composed.coverPath,
-      loopPath: composed.plainPath,
-      selectedTitle: best.title || "",
-      selectedReason: bestReason
+      // 沿用旧字段名，workflow.mjs 那边一行都不用改
+      coverPath: picked.coverPath,
+      loopPath: picked.loopPath,
+      selectedTitle: picked.title || "",
+      selectedReason: `${candidates.length} 条候选中的第 ${index + 1} 条`,
+      pickedIndex: index,
+      // 全部候选，供界面挑选
+      candidates: candidates.map((item, i) => ({
+        index: i,
+        scene: item.scene,
+        title: item.title,
+        imagePrompt: item.imagePrompt,
+        motion: item.motion,
+        imageUrl: item.imageUrl,
+        loopPath: item.loopPath,
+        coverPath: item.coverPath
+      })),
+      failures: items
+        .filter((item) => item.imageError || item.videoError || item.composeError)
+        .map((item) => ({
+          scene: item.scene,
+          title: item.title,
+          error: item.imageError || item.videoError || item.composeError
+        }))
     };
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});

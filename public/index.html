@@ -143,6 +143,14 @@
             <div class="output-empty">暂无文件</div>
           </div>
           <div class="run-note" id="runNote"></div>
+          <div class="output-archive-head">
+            <strong>磁盘上的历史成品</strong>
+            <span id="outputArchiveTotal">统计中…</span>
+            <button id="reloadOutputArchive">刷新</button>
+          </div>
+          <div class="output-list" id="outputArchive">
+            <div class="output-empty">读取中…</div>
+          </div>
         </section>
         <footer class="studio-footer">
           <span>冥想一键工作流 × Agnes</span>
@@ -258,6 +266,14 @@
             <span>四个步骤可以使用相同或不同的兼容接口</span>
             <button class="text-button" id="copyFirstProvider">复制第一步配置到全部</button>
           </div>
+          <label class="text-key-label">文本引擎 API Key<small>四个步骤共用；存进 macOS 钥匙串，不写进配置文件</small>
+            <div class="secret-row">
+              <input id="textApiKey" type="password" autocomplete="off" placeholder="粘贴后点保存">
+              <button class="button quiet" id="toggleTextKey">显示</button>
+              <button class="button primary" id="saveTextKey">保存</button>
+            </div>
+          </label>
+          <div class="key-line"><span id="textKeyStatus">未检查</span><button class="text-button danger" id="deleteTextKey">删除密钥</button></div>
           <div class="provider-list" id="providerSettings"></div>
         </div>
       </section>

@@ -6,6 +6,16 @@ data/asset-history.json
 .env.*
 !.env.example
 work/runs/
+# tools/visual-dryrun.mjs 的落地目录：每跑一次就是 6 张 PNG，纯属看一眼用的中间产物。
+work/dryrun/
+# Agnes 候选循环片的落地目录（agnesHeadless.outputDir 指到这里时）。
+# 每跑一次就是 N 条 mp4，跑几次就是几十兆，而它们只是中间产物 ——
+# 成片里已经烘进去了，留在仓库里没有任何意义。
+work/candidates/
+# 179 篇已发布文稿的原文。六册文体规范里所有「语料实测」的数字都源自它，
+# 但它是作品原文本身 —— 推上去就永久留在 git 历史里，删也删不掉。
+# 本机留着即可；换机器时手动拷。
+data/corpus/
 # 成品目录是 output（单数，见 config.app.outputRoot）。原来只写了 outputs（复数），
 # 名字对不上＝形同虚设：跑几条就有上百 MB 的 mp3 和成片等着被提交进来。
 # playwright 那张调试截图是仓库里本来就有的，单独放行。

@@ -2,8 +2,22 @@
  * 写稿 Skill 的轮动。
  *
  * 六个文体各写各的（道禅 / 古诗词 / 童话 / 动漫 / 华语歌 / 自然场景），
- * 固定用一个会让整个频道听起来是同一篇。轮动的目标不是"随机"，而是
- * **最久没用的先上** —— 随机会连着抽中同一个，而听众最容易察觉的正是"又是它"。
+ * 固定用一个会让整个频道听起来是同一篇。
+ *
+ * 两种挑法，由 config.scriptRotation 决定：
+ *
+ *   random（默认）  随机抽，但**排除上一次刚用过的那个**。
+ *   lru             最久没用的先上。
+ *
+ * 2026-08-14 把默认从 lru 改成 random。原来这里写着「轮动的目标不是随机」，
+ * 理由是"随机会连着抽中同一个"。那个理由只对**纯**随机成立，而 lru 自己有个
+ * 更大的毛病：池子固定时它退化成一条死循环——首轮之后永远是
+ * 道禅→古诗→童话→动漫→歌→自然→道禅→…，顺序一次都不会变。
+ * 单看一篇看不出来，连着听一周就是另一种单调，而"太单一"正是当初要拆六册的原因。
+ *
+ * 所以 random 保留了 lru 唯一真正有用的那一半（不让"又是它"连着出现），
+ * 只是不再规定第 2 到第 6 个的先后。排除项只排上一个、不排更多：
+ * 排得越多越接近 lru，六个里排掉五个就完全等于 lru 了。
  *
  * 状态存在成品目录下的「写稿轮动.json」，和「选题库.json」放一起：
  * 那里本来就是跨次运行的记忆，不进仓库，换机器重来一遍也无所谓。
@@ -50,6 +64,30 @@ export function pickNextSkill(pool, history = []) {
     if (a > b) best = name;
   }
   return best;
+}
+
+/**
+ * 随机挑一个，但不挑上一次刚用过的那个。
+ *
+ * random 注入进来是为了可测：测试传一个定值函数，就能断言"给定随机数出哪个"，
+ * 不用靠跑一万次看分布。生产环境不传，走 Math.random。
+ */
+export function pickRandomSkill(pool, history = [], { random = Math.random } = {}) {
+  if (!pool.length) return "";
+  if (pool.length === 1) return pool[0];
+  const last = history[0];
+  const candidates = pool.filter((name) => name !== last);
+  // 池子里只有上一次那一个能选时（比如池子被删得只剩它），宁可重复也不能返回空
+  const list = candidates.length ? candidates : pool;
+  // random() 按规范取不到 1，但传进来的桩函数可能不守规矩，夹一下防越界
+  return list[Math.min(list.length - 1, Math.floor(random() * list.length))];
+}
+
+/** 按模式分派。认不出来的模式一律当 random —— 默认值不该因为配置写错就变。 */
+export function pickScriptSkill(pool, history = [], mode = "random", options = {}) {
+  return String(mode).trim().toLowerCase() === "lru"
+    ? pickNextSkill(pool, history)
+    : pickRandomSkill(pool, history, options);
 }
 
 export async function loadSkillHistory(config, workspaceRoot) {

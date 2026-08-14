@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pickNextSkill, poolFor, scriptSkillPool } from "../src/skill-rotation.mjs";
+import { pickNextSkill, pickRandomSkill, pickScriptSkill, poolFor, scriptSkillPool } from "../src/skill-rotation.mjs";
 
 const 六个 = [
   "sleep-dao-chan", "sleep-gushiwen", "sleep-tonghua",
@@ -36,8 +36,9 @@ test("六个都用过之后，回到最久没用的那个", () => {
   assert.equal(pickNextSkill(六个, used), "sleep-dao-chan");
 });
 
-test("连续六次不会重样，第七次才回到第一个", () => {
-  // 这条是整个轮动的意义所在：随机会连着抽中同一个，而听众最烦的正是「又是它」
+test("lru：连续六次不会重样，第七次才回到第一个", () => {
+  // 这条同时也是 lru 的软肋：顺序完全固定，首轮之后就是一条死循环。
+  // 默认改用 random 正是为此（见下面「随机挑法」那几条）。
   let history = [];
   const 顺序 = [];
   for (let i = 0; i < 7; i += 1) {
@@ -61,6 +62,63 @@ test("历史里有已经不在池子里的名字，不影响挑选", () => {
 test("空池子返回空串，不抛异常", () => {
   // 槽位没配时应当由上层报「请先绑定 Skill」，不该在这里炸
   assert.equal(pickNextSkill([], ["a"]), "");
+});
+
+// ── 随机挑法（2026-08-14 起的默认）──────────────────────────────────────
+
+test("随机：绝不会连着挑中上一次那个", () => {
+  // 这是 random 从 lru 那里保留下来的唯一一条硬约束 —— 听众最容易察觉的
+  // 就是「又是它」。把随机数从 0 扫到接近 1，任何一个值都不该抽回 dao-chan。
+  for (let i = 0; i < 100; i += 1) {
+    const picked = pickRandomSkill(六个, ["sleep-dao-chan"], { random: () => i / 100 });
+    assert.notEqual(picked, "sleep-dao-chan", `random()=${i / 100} 时抽回了上一次那个`);
+    assert.ok(六个.includes(picked), "抽出来的必须在池子里");
+  }
+});
+
+test("随机：五个候选是均匀铺开的，不是永远第一个", () => {
+  // 排除上一次那个之后剩 5 个，随机数落在哪一档就该出哪一个。
+  // 这条同时证明它不是 lru —— lru 在同样的历史下只会有唯一答案。
+  const 结果 = [0.0, 0.25, 0.45, 0.65, 0.95]
+    .map((r) => pickRandomSkill(六个, ["sleep-dao-chan"], { random: () => r }));
+  assert.equal(new Set(结果).size, 5, "五个不同的随机数应当抽出五个不同的文体");
+});
+
+test("随机：random() 越界返回 1 也不会越界取到 undefined", () => {
+  // 规范说取不到 1，但桩函数或将来换实现可能不守规矩，不能因此拿到 undefined
+  assert.ok(六个.includes(pickRandomSkill(六个, [], { random: () => 1 })));
+  assert.ok(六个.includes(pickRandomSkill(六个, [], { random: () => 1.5 })));
+});
+
+test("随机：池子只剩一个、且正是上次用过的，宁可重复也不返回空", () => {
+  assert.equal(pickRandomSkill(["only"], ["only"], { random: () => 0 }), "only");
+});
+
+test("随机：空池子返回空串，和 lru 一致", () => {
+  assert.equal(pickRandomSkill([], ["a"], { random: () => 0 }), "");
+});
+
+test("pickScriptSkill 按模式分派，认不出的模式走 random", () => {
+  const 定值 = { random: () => 0 };
+  // lru：刚用过 dao-chan → 必然是 gushiwen（顺序唯一）
+  assert.equal(pickScriptSkill(六个, ["sleep-dao-chan"], "lru"), "sleep-gushiwen");
+  assert.equal(pickScriptSkill(六个, ["sleep-dao-chan"], "LRU"), "sleep-gushiwen", "模式名不分大小写");
+  // random：random()=0 取候选里的第一个，而候选已剔除 dao-chan
+  assert.equal(pickScriptSkill(六个, ["sleep-dao-chan"], "random", 定值), "sleep-gushiwen");
+  // 配置写错 / 没写 → 一律 random，不该悄悄变成别的
+  for (const 坏模式 of ["", "  ", "隨機", undefined, null, 0]) {
+    assert.equal(pickScriptSkill(六个, ["sleep-nature-scene"], 坏模式, 定值), "sleep-dao-chan",
+      `模式「${坏模式}」应当回落到 random`);
+  }
+});
+
+test("默认配置用的就是 random", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const dflt = JSON.parse(await readFile(new URL("../data/default-config.json", import.meta.url), "utf8"));
+  assert.equal(dflt.scriptRotation, "random");
+  // scriptRotation 必须待在 slots 外面：slots 是「槽位→Skill 名」的映射，
+  // 混进一个模式键会被 resolveSlots 当成 Skill 名去解析，直接报「找不到 Skill」。
+  assert.equal(dflt.slots.scriptRotation, undefined, "模式键不能写进 slots");
 });
 
 // ── 按册分池 ────────────────────────────────────────────────────────────

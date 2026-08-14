@@ -161,6 +161,54 @@ export function resolveSequencedVideoPlan(totalDuration, introDuration, endFadeS
   };
 }
 
+/**
+ * 把一段视频改造成**首尾真的接得上**的循环片。
+ *
+ * 为什么需要：生视频那边虽然用 keyframes 模式把同一张图同时喂给首帧和尾帧，
+ * 但模型只是「尽量」回到原样，做不到逐像素一致。2026-08-14 实测五条片子，
+ * 接缝处的跳变和片内相邻帧跳变的差值是 +1.4 ~ −7.3 dB —— 画面越安静的那条
+ * 反而越糟（渡口夜泊 −7.3）。原因不难理解：片内本来就几乎不动的话，
+ * 接缝那点差异就没有东西能盖住它，一循环就看见「顿一下」。
+ * 靠改提示词是解决不了的，模型只能尽力，保证得在这一步做。
+ *
+ * 做法（输出比输入短 fade 秒）：
+ *   头 = 原片 [0, fade]
+ *   尾 = 原片 [L, D]        （L = D - fade）
+ *   中 = 原片 [fade, L]
+ *   输出 = xfade(尾 → 头) ++ 中
+ *
+ * 于是输出的第一帧 = 原片第 L 帧，输出的最后一帧也 = 原片第 L 帧，
+ * 首尾天然重合，接缝由构造保证，而不是靠模型自觉。
+ *
+ * 为什么不用「正放 + 倒放」的乒乓法：那能得到数学上完美的循环，但水会倒流、
+ * 雪会倒着往上飘、烛火会反着抖 —— 在助眠片里这种不自然比一点接缝更刺眼。
+ */
+export async function makeSeamlessLoop(config, inputPath, outputPath, { fadeSeconds = 0.4, onProgress, signal } = {}) {
+  const media = config.media || {};
+  const ffmpeg = resolveMediaBinary(media.ffmpegPath, "ffmpeg");
+  const ffprobe = resolveMediaBinary(media.ffprobePath, "ffprobe");
+  const total = await probeDuration(ffprobe, inputPath);
+  // 交叉段不能吃掉整条片子：留够中段，否则 concat 会拿到空输入。
+  // 上限取三分之一是经验值 —— 5 秒片配 0.4 秒交叉，肉眼看不出被截短。
+  const fade = Math.max(0.05, Math.min(Number(fadeSeconds) || 0.4, total / 3));
+  const loopEnd = total - fade;
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await run(ffmpeg, [
+    "-y", "-i", inputPath,
+    "-filter_complex",
+    `[0:v]trim=${loopEnd}:${total},setpts=PTS-STARTPTS[tail];`
+    + `[0:v]trim=0:${fade},setpts=PTS-STARTPTS[head];`
+    + `[0:v]trim=${fade}:${loopEnd},setpts=PTS-STARTPTS[mid];`
+    + `[tail][head]xfade=transition=fade:duration=${fade}:offset=0[joined];`
+    + `[joined][mid]concat=n=2:v=1:a=0[v]`,
+    "-map", "[v]", "-an",
+    "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    outputPath
+  ], { onProgress, signal });
+  return { outputPath, sourceDuration: total, loopDuration: loopEnd, fadeSeconds: fade };
+}
+
 export async function renderVideo(config, {
   audioPath,
   audioDuration,

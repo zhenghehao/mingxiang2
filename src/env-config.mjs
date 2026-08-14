@@ -56,6 +56,8 @@ const STRING_VARS = {
   MEDITATION_VIDEO_ROOT: "media.videoRoot",
   MEDITATION_COVER_DIR: "media.coverDir",
   AGNES_PROJECT_ROOT: "agnes.projectRoot",
+  // 写稿文体的挑法：random（默认，随机但不与上一篇重样）/ lru（最久没用的先上）。
+  MEDITATION_SCRIPT_ROTATION: "scriptRotation",
   AGNES_BASE_URL: "agnesHeadless.baseUrl",
   AGNES_COVER_PATH: "agnesHeadless.coverPath",
   AGNES_OUTPUT_DIR: "agnesHeadless.outputDir",
@@ -66,7 +68,10 @@ const STRING_VARS = {
   // 那条视觉流水线，所以配置字段挂在 agnesHeadless 下面。但环境变量名要说明
   // 「这是什么」而不是「谁在用」，否则填 secret 时会去找 Agnes 的 key，填错。
   SENSENOVA_SCORER_URL: "agnesHeadless.scorerUrl",
-  SENSENOVA_MOTION_URL: "agnesHeadless.motionUrl"
+  SENSENOVA_MOTION_URL: "agnesHeadless.motionUrl",
+  // 导演也搬到了 SenseNova（它不看图，占着 Agnes 的额度没道理）。
+  SENSENOVA_DIRECTOR_URL: "agnesHeadless.directorUrl",
+  SENSENOVA_DIRECTOR_MODEL: "agnesHeadless.directorModel"
 };
 
 /** 列表类：逗号/换行分隔。 */
@@ -75,7 +80,9 @@ const LIST_VARS = {
   AGNES_API_KEYS: "agnesHeadless.apiKeys",
   AGNES_VIDEO_KEYS: "agnesHeadless.videoKeys",
   SENSENOVA_SCORER_KEYS: "agnesHeadless.scorerKeys",
-  SENSENOVA_MOTION_KEYS: "agnesHeadless.motionKeys"
+  SENSENOVA_MOTION_KEYS: "agnesHeadless.motionKeys",
+  // 不填也行：directorKeys 为空时自动借用 scorerKeys。
+  SENSENOVA_DIRECTOR_KEYS: "agnesHeadless.directorKeys"
 };
 
 /** 数字类。 */

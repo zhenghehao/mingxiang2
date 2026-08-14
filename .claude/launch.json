@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meditation-workflow",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 4318
+    },
+    {
+      "name": "agnes-playground",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/Users/SHAREit/Desktop/agnes-playground/cors-proxy.js"],
+      "port": 8899
+    }
+  ]
+}

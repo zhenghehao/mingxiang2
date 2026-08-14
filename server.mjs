@@ -9,6 +9,7 @@ import { deepMerge, readJson, writeJson } from "./src/json-store.mjs";
 import { applyEnvOverrides, localOnlyPaths } from "./src/env-config.mjs";
 import { compareInfo, readCompareBaseline, runCompareStep, saveCompareOutputs, testCompareProvider } from "./src/compare.mjs";
 import { listMediaLibrary } from "./src/library.mjs";
+import { deleteOutputRun, listOutputRuns } from "./src/output-store.mjs";
 import { checkBinary, resolveMediaBinary } from "./src/media.mjs";
 import { synthesizeMinimax } from "./src/providers.mjs";
 import {
@@ -564,6 +565,29 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/library/media") {
       return json(res, 200, await listMediaLibrary(config, url.searchParams.get("type")));
     }
+    // 成品的列举与删除。列举带体积，因为「该删哪个」靠的就是这个数。
+    if (req.method === "GET" && url.pathname === "/api/output/runs") {
+      const outputRoot = path.resolve(ROOT, config.app.outputRoot);
+      const runs = await listOutputRuns(outputRoot);
+      return json(res, 200, {
+        outputRoot,
+        totalBytes: runs.reduce((sum, r) => sum + r.bytes, 0),
+        runs
+      });
+    }
+    // 删除走 DELETE + 请求体里的 relPath，不走查询串：成品标题是中文、
+    // 还可能带空格和标点，塞进 URL 里编码解码要出岔子的地方太多。
+    if (req.method === "DELETE" && url.pathname === "/api/output/runs") {
+      const input = await body(req);
+      const outputRoot = path.resolve(ROOT, config.app.outputRoot);
+      try {
+        return json(res, 200, await deleteOutputRun(outputRoot, input.relPath));
+      } catch (error) {
+        // 校验没过是调用方的问题（400），不是服务器炸了（500）——
+        // 分清楚，前端才好把原因原样显示给人看
+        return json(res, 400, { error: error.message });
+      }
+    }
     if (req.method === "GET" && url.pathname === "/api/topic-history") {
       const topics = await loadTopicHistory(config, ROOT);
       return json(res, 200, { count: topics.length, topics });
@@ -1023,10 +1047,19 @@ server.listen(config.app.port, "127.0.0.1", () => {
   // 只查单数会在明明配好了的情况下报「未配置」，比不提示更糟。
   const senseKeys = [process.env.SENSENOVA_API_KEYS, process.env.SENSENOVA_API_KEY]
     .filter(Boolean).join(",").split(/[,;\n]/).map((k) => k.trim()).filter(Boolean);
-  if (!senseKeys.length) {
-    console.log("  提示：未设 SENSENOVA_API_KEYS，封面生成会报错（在 ~/.zshrc 里 export 一次即可）");
+  // 2026-08-14 起环境变量不是唯一来源了：cover.mjs 拿不到环境变量时会回退到
+  // agnesHeadless 里那批 SenseNova key（同一家、同一个端点）。所以这里也得一起看，
+  // 否则明明能跑却在启动时吓唬人一句「封面生成会报错」—— 比不提示更糟。
+  const ah = config.agnesHeadless || {};
+  const configKeys = [...(ah.directorKeys || []), ...(ah.scorerKeys || []), ...(ah.motionKeys || [])]
+    .map((k) => String(k || "").trim()).filter(Boolean);
+  const total = new Set([...senseKeys, ...configKeys]).size;
+  if (!total) {
+    console.log("  提示：没有可用的 SenseNova key，封面这一步会失败"
+      + "（设 SENSENOVA_API_KEYS 环境变量，或在 config.json 的 agnesHeadless 里填，两者任一即可）");
   } else {
-    console.log(`  封面密钥：${new Set(senseKeys).size} 把可用`);
+    const 来源 = senseKeys.length ? (configKeys.length ? "环境变量＋配置" : "环境变量") : "配置文件";
+    console.log(`  封面密钥：${total} 把可用（来自${来源}）`);
   }
   // 把文本模型和密钥来源打出来。
   //

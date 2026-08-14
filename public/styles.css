@@ -704,3 +704,22 @@ label{display:grid;gap:7px;color:#666970;font-size:12px}
 /* 一行太宽读起来发散，给内容一个舒服的阅读宽度 */
 .board-head, .stage-list { max-width: 860px; width: 100%; }
 .stage-list { align-self: flex-start; }
+
+/* 历史成品：磁盘上堆着的那些，带体积和删除 */
+.output-archive-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, .1));
+}
+.output-archive-head strong { font-size: 13px; }
+.output-archive-head span { font-size: 12px; opacity: .65; margin-right: auto; }
+.output-archive-head button { font-size: 12px; padding: 4px 10px; }
+/* 删除是不可逆的，按钮要长得和「打开」「位置」明显不同 */
+.output-actions button.danger { color: #ff6b6b; border-color: rgba(255, 107, 107, .45); }
+.output-actions button.danger:hover { background: rgba(255, 107, 107, .12); }
+.output-item.confirming { border-color: rgba(255, 107, 107, .4); background: rgba(255, 107, 107, .06); }
+.archive-warn { font-size: 12px; color: #ff9b9b; margin-right: 4px; }
+.text-key-label small { display: block; font-weight: 400; opacity: .6; font-size: 12px; margin-top: 2px; }

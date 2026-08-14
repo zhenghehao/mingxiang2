@@ -145,3 +145,78 @@ test("不分池时待命池为空，生图退回在主池里轮换", () => {
   assert.deepEqual(pools.spareKeys, [], "没分池就不该有待命池，否则会重复使用同一批 key");
   assert.deepEqual(pools.imageKeys, keys(4));
 });
+
+// ── 并行时的 key 分配 ────────────────────────────────────────────────────
+//
+// 这一条防的是同一个 bug 犯第三次：writeMotionPrompt 和 genVideo 里取 key 的
+// 循环变量都是「换 key 重试的序号」，恒从 0 起。单张图 / 单条视频时看不出问题，
+// 一旦 N 路并行，N 个调用会同时抓第 0 把 —— 多配的 key 一把都用不上，
+// 而第一把被 N 倍的量砸中，直接撞限流（SenseNova 报 inference tpm exhausted）。
+//
+// 注意这个测试必须**真的走到聊天接口**才算数。第一版写成了「抓不到 key 就跳过
+// 断言」，而它其实每次都在 imgToThumb 那步就挂了（workDir 没传），
+// 于是 5 次全绿、却什么都没验。所以这里给真 workDir、真 PNG，让 ffmpeg 真跑，
+// 并且最后硬断言「确实打到了 N 次」。
+test("N 路并行写运动词要落在 N 把不同的 key 上", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { writeMotionPrompt } = await import("../src/agnes-headless.mjs");
+
+  // 1×1 的合法 PNG，够 ffmpeg 缩一次
+  const PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64");
+
+  const workDir = await mkdtemp(path.join(os.tmpdir(), "motion-key-test-"));
+  const 用过的 = [];
+  const 原始fetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).includes("/chat/completions")) {
+      用过的.push(String(options?.headers?.Authorization || "").replace("Bearer ", ""));
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ finish_reason: "stop", message: { content: "Camera static, water rippling in place, seamless loop." } }] })
+      };
+    }
+    return new Response(PNG); // 图片下载：给一张真图，好让 ffmpeg 走通
+  };
+
+  try {
+    const agnes = { motionUrl: "https://example.test/v1", motionModel: "m", motionKeys: ["k0", "k1", "k2", "k3", "k4"] };
+    await Promise.all([0, 1, 2, 3, 4].map((n) => writeMotionPrompt(
+      { media: {} }, agnes, `https://example.test/img${n}.png`, { keyIndex: n, workDir }
+    )));
+  } finally {
+    globalThis.fetch = 原始fetch;
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+
+  assert.equal(用过的.length, 5, "5 路并行应当各自打一次聊天接口；数量对不上说明测试根本没走到那一步");
+  assert.deepEqual([...用过的].sort(), ["k0", "k1", "k2", "k3", "k4"],
+    `5 路并行应当各用一把 key，实际是 ${用过的.join(",")}`);
+});
+
+// ── 内容审核失败的识别 ──────────────────────────────────────────────────
+//
+// 这条决定「要不要换措辞重来」。认错了的代价是两头都不对：
+// 把限流当成审核 → 白白换掉一个本来没问题的场景；
+// 把审核当成限流 → 拿同一条提示词重试，永远还是被拒。
+test("只把内容审核认成「必须换措辞」，限流超时不算", async () => {
+  const { isContentPolicyFailure } = await import("../src/agnes-headless.mjs");
+  const 该换措辞 = [
+    '400: {"code":"content_policy_violation","message":"Unable to generate this content. Please modify your prompt and try again."}',
+    "生视频提交失败：400: content_policy_violation",
+    "Unable to generate this content"
+  ];
+  const 不该换 = [
+    "429: inference tpm exhausted",
+    "HTTP 503: model_not_found",
+    "视频生成轮询超时（等了 270 秒）",
+    "fetch failed",
+    "",
+    undefined
+  ];
+  for (const m of 该换措辞) assert.ok(isContentPolicyFailure(m), `应当识别为内容审核：${m}`);
+  for (const m of 不该换) assert.ok(!isContentPolicyFailure(m), `不该当成内容审核：${m}`);
+});

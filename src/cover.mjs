@@ -2,7 +2,7 @@
  * cover.mjs — 封面图生成模块
  *
  * 流程：
- * 1. 用 SenseNova 6.7-flash-lite 根据冥想内容生成两条图片 prompt（4:3 和 16:9）
+ * 1. 用 deepseek-v4-flash（走 SenseNova 端点）根据冥想内容生成两条图片 prompt（4:3 和 16:9）
  * 2. 用 SenseNova U1 Fast 分别生成两张封面图
  * 3. 保存到桌面 bilibili 文件夹，命名为 "4比3.png" 和 "16比9.png"
  *
@@ -33,12 +33,29 @@ function readSenseNovaKeys() {
   // 全角逗号是中文输入法的默认，切不开会把整串当成一把 key。
   return [...new Set(raw.split(/[,、，;；\s]+/).map((k) => k.trim()).filter(Boolean))];
 }
-const SENSENOVA_KEYS = readSenseNovaKeys();
+/**
+ * 环境变量优先；没有就用配置里那批 SenseNova key。
+ *
+ * 2026-08-14 加的回退。在此之前只认环境变量，于是出现过这种局面：
+ * config.json 里躺着 100 把 SenseNova key（导演/评委/运动词都在用，
+ * 端点和封面这里完全相同，就是 token.sensenova.cn），封面这一步却报
+ * 「未配置 SENSENOVA_API_KEYS 环境变量」把整条流水线卡死。
+ * 同一家、同一个端点的 key 已经在手边，没道理逼人再 export 一遍。
+ */
+function resolveKeys(config) {
+  const fromEnv = readSenseNovaKeys();
+  if (fromEnv.length) return fromEnv;
+  const a = config?.agnesHeadless || {};
+  return [...new Set(
+    [...(a.directorKeys || []), ...(a.scorerKeys || []), ...(a.motionKeys || [])]
+      .map((k) => String(k || "").trim()).filter(Boolean)
+  )];
+}
 
 /** 轮转取 key。只有一把时永远返回那把，行为和以前完全一致。 */
-function pickKey(index = 0) {
-  if (!SENSENOVA_KEYS.length) return "";
-  return SENSENOVA_KEYS[((index % SENSENOVA_KEYS.length) + SENSENOVA_KEYS.length) % SENSENOVA_KEYS.length];
+function pickKey(keys, index = 0) {
+  if (!keys.length) return "";
+  return keys[((index % keys.length) + keys.length) % keys.length];
 }
 const CHAT_URL = "https://token.sensenova.cn/v1/chat/completions";
 const IMAGE_URL = "https://token.sensenova.cn/v1/images/generations";
@@ -94,7 +111,7 @@ function parseCoverJson(text) {
 
 // max_tokens 从 3200 起。这段要输出副标题 + 两条完整 image_prompt，
 // 每条 prompt 本身就有几百字；原来给 1500 实测会被截断，一截断就退回模板。
-async function generateCoverPrompts(topic, script, retries = 3, maxTokens = 3200) {
+async function generateCoverPrompts(keys, topic, script, retries = 3, maxTokens = 3200) {
   const system = `你是一位资深冥想视觉设计师，擅长为 AI 图片模型（SenseNova U1）撰写高质量中文+英文混合 prompt。根据用户提供的冥想选题和文稿摘要，生成封面图的 prompt 和副标题。
 
 【核心原则：具体胜过抽象】
@@ -135,21 +152,29 @@ async function generateCoverPrompts(topic, script, retries = 3, maxTokens = 3200
   const response = await fetch(CHAT_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${pickKey(3 - retries)}`,
+      Authorization: `Bearer ${pickKey(keys, 3 - retries)}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      // 2026-07-25 换掉了 sensenova-6.7-flash-lite。
+      // 这一步只读文稿、不看图，所以不需要多模态模型，挑最快且能稳定出 JSON 的。
       //
-      // 那是个**推理模型**：先吐 reasoning 再吐 content。用真实文稿实测，
-      // max_tokens=1000 时 reasoning 就烧掉 3735 字符、content 返回空；
-      // 加到 4000，reasoning 跟着涨到 10909，content 仍然是 0，
-      // finish_reason 一直是 length —— 推理会撑满你给的任何预算，加 token 无解。
-      // 结果就是 JSON.parse("") 抛错，把整条流程带走（用户看到的「封面卡住」）。
+      // 2026-07-25 换掉 sensenova-6.7-flash-lite：那是个**推理模型**，先吐 reasoning
+      // 再吐 content。实测 max_tokens=1000 时 reasoning 烧掉 3735 字符、content 为空；
+      // 加到 4000，reasoning 涨到 10909，content 仍是 0，finish_reason 一直是 length ——
+      // 推理会撑满你给的任何预算，加 token 无解。结果 JSON.parse("") 抛错，
+      // 把整条流程带走（用户看到的「封面卡住」）。
       //
-      // glm-5.2 实测 7.9s、reasoning=0、JSON 一次通过，故改用它。
-      // 备选 deepseek-v4-flash 更快（4.5s）但输出不是合法 JSON。
-      model: "glm-5.2",
+      // 2026-08-13 又换掉 glm-5.2：实测该模型在本 workspace 已 429
+      // 「Workspace allocated quota exceeded」，直接不可用，封面这一步必然失败。
+      //
+      // 现用 deepseek-v4-flash，同一个 SenseNova 端点、同一把 key。
+      // 2026-08-13 实测：3.6s、finish_reason=stop、JSON 一次通过。
+      // （同日实测 sensenova-6.8-flash-lite 也能一次出合法 JSON、reasoning=0，
+      //   但要 21s，是 deepseek 的近 6 倍，故不选它。）
+      // 注意：本函数只读 message.content，不碰 reasoning 字段，
+      // 所以两家模型 reasoning 字段名不同（6.8 叫 reasoning、deepseek 叫
+      // reasoning_content）对这里没有影响。
+      model: "deepseek-v4-flash",
       max_tokens: maxTokens,
       temperature: 0.7,
       messages: [
@@ -166,7 +191,7 @@ async function generateCoverPrompts(topic, script, retries = 3, maxTokens = 3200
     const waitMs = (4 - retries) * 8000;
     console.warn(`[cover] 触发限流，${waitMs / 1000}s 后重试（剩余 ${retries} 次）`);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    return generateCoverPrompts(topic, script, retries - 1, maxTokens);
+    return generateCoverPrompts(keys, topic, script, retries - 1, maxTokens);
   }
   if (!response.ok) {
     throw new Error(`封面 prompt 生成失败（${response.status}）：${payload?.error?.message || "未知错误"}`);
@@ -187,7 +212,7 @@ async function generateCoverPrompts(topic, script, retries = 3, maxTokens = 3200
     // 不该因为 token 不够就直接放弃。
     if (finish === "length" && retries > 0) {
       console.warn(`[cover] 输出被截断（${content.length} 字符），加大 token 预算重试（剩余 ${retries} 次）`);
-      return generateCoverPrompts(topic, script, retries - 1, maxTokens * 2);
+      return generateCoverPrompts(keys, topic, script, retries - 1, maxTokens * 2);
     }
     // 兜底：模型没给出可用 JSON（推理超预算、返回空、格式跑偏都算）时，
     // 用选题拼一份确定性 prompt。封面质量会平淡一些，但**总比没有封面强** ——
@@ -279,17 +304,17 @@ async function composeCoverText(photoPath, outputPath, subtitle, spec) {
 /**
  * 用 SenseNova U1 Fast 生成一张图片
  */
-async function generateImage(prompt, size) {
+async function generateImage(keys, prompt, size) {
   // 一把不行就换下一把。限流（429）和额度问题都是按 key 算的，
   // 换 key 比在同一把上退避等待有效得多。最多试到把池子走一遍。
   let payload;
   let response;
   let lastError = "";
-  for (let attempt = 0; attempt < Math.max(1, SENSENOVA_KEYS.length); attempt += 1) {
+  for (let attempt = 0; attempt < Math.max(1, keys.length); attempt += 1) {
     response = await fetch(IMAGE_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${pickKey(attempt)}`,
+        Authorization: `Bearer ${pickKey(keys, attempt)}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -303,12 +328,12 @@ async function generateImage(prompt, size) {
     payload = await response.json().catch(() => ({}));
     if (response.ok) break;
     lastError = `${response.status}：${payload?.error?.message || "未知错误"}`;
-    if (attempt < SENSENOVA_KEYS.length - 1) {
+    if (attempt < keys.length - 1) {
       console.warn(`[cover] 第 ${attempt + 1} 把 key 出图失败（${lastError}），换下一把`);
     }
   }
   if (!response.ok) {
-    throw new Error(`图片生成失败（试了 ${Math.max(1, SENSENOVA_KEYS.length)} 把 key）：${lastError}`);
+    throw new Error(`图片生成失败（试了 ${Math.max(1, keys.length)} 把 key）：${lastError}`);
   }
 
   const url = payload?.data?.[0]?.url;
@@ -339,8 +364,9 @@ export async function generateCovers(text, { onProgress, config } = {}) {
 
   // 没有密钥就在入口处直说。否则会先 401 退回模板 prompt，再 401 出图失败，
   // 最后只留下一串「封面生成未完成」，看不出根因其实是环境变量没设。
-  if (!SENSENOVA_KEYS.length) {
-    throw new Error("未配置 SENSENOVA_API_KEYS 环境变量，无法生成封面（多把用逗号分隔，在 ~/.zshrc 里 export 一次即可）");
+  const keys = resolveKeys(config);
+  if (!keys.length) {
+    throw new Error("没有可用的 SenseNova key，无法生成封面。要么设 SENSENOVA_API_KEYS 环境变量（多把用逗号分隔），要么在 config.json 的 agnesHeadless.directorKeys / scorerKeys / motionKeys 里填 —— 三者任一即可。");
   }
 
   // 确保输出目录存在
@@ -349,6 +375,7 @@ export async function generateCovers(text, { onProgress, config } = {}) {
   // 步骤 1：生成 prompt
   progress({ step: "cover", status: "running", progress: 55, message: "正在为封面图设计构图与副标题" });
   const prompts = await generateCoverPrompts(
+    keys,
     String(text.topic || ""),
     String(text.script || "")
   );
@@ -377,7 +404,7 @@ export async function generateCovers(text, { onProgress, config } = {}) {
     COVER_SPECS.map(async (spec) => {
       const outputPath = path.join(BILIBILI_DIR, `${spec.name}.png`);
       const photoPath = path.join(BILIBILI_DIR, `.photo-${spec.name}.png`);
-      const imageUrl = await generateImage(promptMap[spec.name], spec.size);
+      const imageUrl = await generateImage(keys, promptMap[spec.name], spec.size);
       await downloadImage(imageUrl, photoPath);
       try {
         await composeCoverText(photoPath, outputPath, prompts.subtitle, spec);
