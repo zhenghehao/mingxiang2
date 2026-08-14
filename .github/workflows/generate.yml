@@ -61,6 +61,51 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq python3-pil fonts-noto-cjk
 
+      # 背景音来自另一个私有仓库的 Release 附件（zhenghehao/mingxiang2-bgm）。
+      #
+      # 为什么不放主仓库：180 首合计 1GB，git track 的话每次 checkout 都要拉一遍
+      # （现在 checkout 是 2 秒），而且进了 git 历史就删不掉。Release 附件不算
+      # git 对象，这里每次只下载**随机挑中的那一首**，3~11MB。
+      #
+      # 没配 BGM_REPO_TOKEN 也能跑：仓库自带 3 首 CC 协议配乐兜底。
+      # 这一步刻意不用 `set -e` 的失败中断 —— 拿不到背景音不该让整集生成失败，
+      # 退回自带的那几首就行，日志里会说清楚用的是哪种。
+      - name: 取一首背景音
+        env:
+          BGM_TOKEN: ${{ secrets.BGM_REPO_TOKEN }}
+          BGM_REPO: zhenghehao/mingxiang2-bgm
+          BGM_TAG: bgm-v1
+        run: |
+          if [ -z "$BGM_TOKEN" ]; then
+            echo "没配 BGM_REPO_TOKEN，用仓库自带的 CC 协议配乐（$(ls assets/bgm/*.mp3 2>/dev/null | wc -l) 首）"
+            exit 0
+          fi
+          export GH_TOKEN="$BGM_TOKEN"
+          names=$(gh release view "$BGM_TAG" --repo "$BGM_REPO" --json assets \
+                    --jq '.assets[].name | select(endswith(".mp3"))' 2>/dev/null || true)
+          if [ -z "$names" ]; then
+            echo "⚠ 读不到 $BGM_REPO 的 release $BGM_TAG（token 权限？tag 名？），退回自带配乐"
+            exit 0
+          fi
+          count=$(printf '%s\n' "$names" | wc -l | tr -d ' ')
+          pick=$(printf '%s\n' "$names" | shuf -n 1)
+          echo "背景音库 $count 首，本次随机选中：$pick"
+          mkdir -p /tmp/bgmpick
+          if gh release download "$BGM_TAG" --repo "$BGM_REPO" -p "$pick" -D /tmp/bgmpick --clobber 2>/dev/null \
+             && [ -s "/tmp/bgmpick/$pick" ]; then
+            # 对照表把序号翻回原名 —— 成品清单里要能看出这一集用的是哪首曲子
+            if gh release download "$BGM_TAG" --repo "$BGM_REPO" -p manifest.json -D /tmp/bgmpick --clobber 2>/dev/null; then
+              orig=$(python3 -c "import json,sys; print(json.load(open('/tmp/bgmpick/manifest.json'))['tracks'].get('$pick','(对照表里没有)'))" 2>/dev/null || echo "")
+              [ -n "$orig" ] && echo "  原始曲名：$orig"
+            fi
+            # 下载成功才清掉自带的：失败时那 3 首还得顶上
+            rm -f assets/bgm/*.mp3
+            mv "/tmp/bgmpick/$pick" assets/bgm/
+            echo "  已放入 assets/bgm/（$(du -h "assets/bgm/$pick" | cut -f1)）"
+          else
+            echo "⚠ 下载 $pick 失败，退回自带配乐"
+          fi
+
       - name: 生成
         env:
           # ── 密钥（仓库 Settings → Secrets and variables → Actions → Secrets）──
