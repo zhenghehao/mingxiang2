@@ -58,7 +58,6 @@ function pickKey(keys, index = 0) {
   return keys[((index % keys.length) + keys.length) % keys.length];
 }
 const CHAT_URL = "https://token.sensenova.cn/v1/chat/completions";
-const IMAGE_URL = "https://token.sensenova.cn/v1/images/generations";
 // B 站上传要去固定目录取封面，所以保留这个约定；换机器时用环境变量改。
 const BILIBILI_DIR = process.env.MEDITATION_COVER_DIR
   || path.join(homedir(), "Desktop", "bilibili");
@@ -69,6 +68,9 @@ const BILIBILI_DIR = process.env.MEDITATION_COVER_DIR
 // 为什么不共用一个比例：16:9 只有 1536 高、4:3 有 1760 高，同一个比例算出来
 // 前者 165px、后者 190px —— 同比例反而不同大小，看着就是 16:9 的字偏小。
 // 现在 4:3 用 0.108（190px）、16:9 用 0.136（208px），照实际出图挑定的。
+// size 这一栏现在只是**兜底**：真实尺寸以出图结果为准（见 readPngSize）。
+// 留着是因为读不到 PNG 头时总得有个数，而且 titleRatio/subtitleRatio 是相对高度的比例，
+// 换模型换尺寸都不用动。
 const COVER_SPECS = [
   { name: "4比3", size: "2368x1760", aspect: "4:3", titleRatio: 0.108, subtitleRatio: 0.052 },
   { name: "16比9", size: "2752x1536", aspect: "16:9", titleRatio: 0.136, subtitleRatio: 0.066 }
@@ -304,26 +306,68 @@ async function composeCoverText(photoPath, outputPath, subtitle, spec) {
 /**
  * 用 SenseNova U1 Fast 生成一张图片
  */
-async function generateImage(keys, prompt, size) {
+/**
+ * 从 PNG 头里读真实宽高。
+ *
+ * 不能再拿 COVER_SPECS.size 当结果报出去了：那是 U1 时代写死的像素值
+ * （2368x1760 / 2752x1536），换成 Agnes 之后实际出的是 2304x1728 / 2624x1472。
+ * 叠字脚本用的是真实尺寸，而返回给上层的元数据用的是写死的值 —— 同一张图
+ * 两个数，清单里记的主标题字号能差 9px。宁可多读 24 个字节。
+ *
+ * PNG 的 IHDR 固定在最前面：8 字节签名 + 4 长度 + 4 类型，
+ * 然后就是大端的宽和高各 4 字节。不引图像库。
+ */
+async function readPngSize(file) {
+  const { open } = await import("node:fs/promises");
+  const fh = await open(file, "r");
+  try {
+    const buf = Buffer.alloc(24);
+    await fh.read(buf, 0, 24, 0);
+    if (buf.toString("ascii", 1, 4) !== "PNG") return null;
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * 出一张封面照片。
+ *
+ * 2026-08-14 从 SenseNova U1 Fast 换成 Agnes（和正片画面同一个生图模型）。
+ * 换的理由是**风格统一**：封面和视频画面出自同一个模型，观感才是一套的；
+ * 两家模型各画各的，封面看着像另一个频道的。
+ *
+ * 接口形状不一样，得翻译一遍：
+ *   U1     size: "2368x1760"        直接给像素
+ *   Agnes  size: "2K", ratio: "4:3"  给档位 + 比例
+ * 实测 Agnes 2K 档：4:3 → 2304×1728（27~34 秒），16:9 → 2624×1472。
+ * 和原来的 2368×1760 / 2752×1536 差 3~5%，而 B 站封面最低只要 1146×717，
+ * 所以这点差别没有实际影响。不用 1K 档是因为它只有 1152×864，掉得太多。
+ */
+async function generateImage(agnes, prompt, ratio) {
+  const keys = agnes.apiKeys;
   // 一把不行就换下一把。限流（429）和额度问题都是按 key 算的，
   // 换 key 比在同一把上退避等待有效得多。最多试到把池子走一遍。
   let payload;
   let response;
   let lastError = "";
   for (let attempt = 0; attempt < Math.max(1, keys.length); attempt += 1) {
-    response = await fetch(IMAGE_URL, {
+    response = await fetch(`${agnes.baseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${pickKey(keys, attempt)}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "sensenova-u1-fast",
+        model: agnes.imgModel,
         prompt,
-        size,
+        size: "2K",
+        ratio,
         n: 1
       }),
-      signal: AbortSignal.timeout(120_000)
+      // 2K 档实测 27~34 秒，比 U1 慢；120 秒的上限留得够，
+      // 而封面这一步是和视频生成并行跑的，慢一点不影响总时长。
+      signal: AbortSignal.timeout(180_000)
     });
     payload = await response.json().catch(() => ({}));
     if (response.ok) break;
@@ -364,6 +408,17 @@ export async function generateCovers(text, { onProgress, config } = {}) {
 
   // 没有密钥就在入口处直说。否则会先 401 退回模板 prompt，再 401 出图失败，
   // 最后只留下一串「封面生成未完成」，看不出根因其实是环境变量没设。
+  // 出图走 Agnes，写 prompt 那步仍走 SenseNova（deepseek）—— 两批 key 不一样。
+  const agnes = {
+    baseUrl: String(config?.agnesHeadless?.baseUrl || "https://apihub.agnes-ai.cn").replace(/\/$/, ""),
+    imgModel: config?.agnesHeadless?.imgModel || "agnes-image-2.0-flash",
+    apiKeys: [...new Set((config?.agnesHeadless?.apiKeys || [])
+      .map((k) => String(k || "").trim()).filter(Boolean))]
+  };
+  if (!agnes.apiKeys.length) {
+    throw new Error("封面出图要用 Agnes，但 agnesHeadless.apiKeys 是空的（云端设 AGNES_API_KEYS）");
+  }
+
   const keys = resolveKeys(config);
   if (!keys.length) {
     throw new Error("没有可用的 SenseNova key，无法生成封面。要么设 SENSENOVA_API_KEYS 环境变量（多把用逗号分隔），要么在 config.json 的 agnesHeadless.directorKeys / scorerKeys / motionKeys 里填 —— 三者任一即可。");
@@ -386,7 +441,7 @@ export async function generateCovers(text, { onProgress, config } = {}) {
     status: "running",
     progress: 56,
     message: `正在生成封面图 · 副标题：${prompts.subtitle}`,
-    detail: "SenseNova U1 Fast · 4:3 + 16:9"
+    detail: "Agnes 2K · 4:3 + 16:9"
   });
 
   // 照片里不该有任何文字，无论 prompt 来自模型还是模板兜底都钉一遍
@@ -404,7 +459,7 @@ export async function generateCovers(text, { onProgress, config } = {}) {
     COVER_SPECS.map(async (spec) => {
       const outputPath = path.join(BILIBILI_DIR, `${spec.name}.png`);
       const photoPath = path.join(BILIBILI_DIR, `.photo-${spec.name}.png`);
-      const imageUrl = await generateImage(keys, promptMap[spec.name], spec.size);
+      const imageUrl = await generateImage(agnes, promptMap[spec.name], spec.aspect);
       await downloadImage(imageUrl, photoPath);
       try {
         await composeCoverText(photoPath, outputPath, prompts.subtitle, spec);
@@ -412,13 +467,16 @@ export async function generateCovers(text, { onProgress, config } = {}) {
         // 中间的纯照片没有保留价值，叠完就删；失败也删，不留半成品在 B 站取图的目录里
         await unlink(photoPath).catch(() => {});
       }
+      // 尺寸以**磁盘上那张图**为准，不用 COVER_SPECS 里写死的值
+      const real = await readPngSize(outputPath);
+      const h = real?.height || Number(spec.size.split("x")[1]);
       return {
         name: spec.name,
         path: outputPath,
-        size: spec.size,
+        size: real ? `${real.width}x${real.height}` : spec.size,
         aspect: spec.aspect,
-        titlePx: Math.round(Number(spec.size.split("x")[1]) * spec.titleRatio),
-        subtitlePx: Math.round(Number(spec.size.split("x")[1]) * spec.subtitleRatio)
+        titlePx: Math.round(h * spec.titleRatio),
+        subtitlePx: Math.round(h * spec.subtitleRatio)
       };
     })
   );
