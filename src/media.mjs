@@ -121,6 +121,59 @@ export async function selectDatedAsset(root, date, extensions, { strategy = "dat
   return unique[seed % unique.length];
 }
 
+/**
+ * 量一段音频的整体响度（EBU R128 的 integrated loudness，单位 LUFS）。
+ *
+ * 量不出来就返回 null，由调用方决定怎么办 —— 背景音响度这件事不值得让
+ * 整条流水线挂掉。
+ */
+export async function measureLoudness(ffmpegPath, file) {
+  // ebur128 的统计摘要走 stderr，而且是 info 级别 —— 加 -v error 会把它一起吞掉，
+  // 于是量出来永远是空。这个坑踩过一次，记在这儿。
+  const { stderr } = await run(ffmpegPath, [
+    "-hide_banner", "-nostats", "-i", file, "-af", "ebur128", "-f", "null", "-"
+  ]).catch(() => ({ stderr: "" }));
+  const tail = stderr.slice(stderr.lastIndexOf("Integrated loudness"));
+  const match = tail.match(/I:\s*(-?[\d.]+)\s*LUFS/);
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * 背景音该用多少增益。
+ *
+ * 直接用 bgmGainDb 的问题：曲库里 180 首曲子本身响度就不齐（实测随手两首
+ * 差 1.2dB，全库跨度只会更大）。同一个 gain，随机到响的那首就偏吵、
+ * 闷的那首就偏弱 —— 用户是拿其中一首定的音量，其余全部围着它上下摆。
+ *
+ * 所以先把每首都归一到同一个基准响度，再套 gain。这样 bgmGainDb 才是个
+ * 说了算的旋钮，而不是「看今天抽到哪首」。
+ *
+ * 用**静态增益**而不是 loudnorm 滤镜，有两个原因：
+ *   1. 背景音是 -stream_loop -1 无限循环的，动态归一化会在循环接缝处
+ *      按不同的历史窗口做出不同的处理，接缝就露出来了。
+ *   2. 这些是氛围音乐，本来就不需要压缩动态；静态增益不引入任何处理痕迹。
+ *
+ * 量不出响度时退回原来的行为（只用 bgmGainDb），并把原因交给调用方去说。
+ */
+export function resolveBgmGain(gainDb, measuredLufs, targetLufs) {
+  const gain = Number(gainDb) || 0;
+  // null / "" / undefined 必须先挡掉再转数字 —— Number(null) 是 0 而不是 NaN。
+  // 不挡的话「bgmTargetLufs: null 关掉归一化」会被解释成「基准是 0 LUFS」，
+  // 于是每首曲子都被推高十几 dB，成品震耳欲聋。这是 JS 里最容易中的一枪。
+  const target = targetLufs === null || targetLufs === undefined || targetLufs === ""
+    ? NaN
+    : Number(targetLufs);
+  if (!Number.isFinite(measuredLufs) || !Number.isFinite(target)) {
+    return { gain, normalized: false, delta: 0 };
+  }
+  // 比基准响的曲子往下压，闷的往上抬。
+  // 取两位小数：这个值要拼进 ffmpeg 的滤镜字符串，
+  // -8.199999999999999dB 既难看又让每次的命令行不可复现。
+  const delta = Number((target - measuredLufs).toFixed(2));
+  return { gain: Number((gain + delta).toFixed(2)), normalized: true, delta };
+}
+
 export async function renderAudio(config, { voicePath, bgmPath, outputAudio, onProgress, signal } = {}) {
   const media = config.media;
   const ffmpeg = resolveMediaBinary(media.ffmpegPath, "ffmpeg");
@@ -132,7 +185,14 @@ export async function renderAudio(config, { voicePath, bgmPath, outputAudio, onP
   const fade = Number(media.fadeSeconds);
   const total = intro + voiceDuration + fade;
   const fadeStart = intro + voiceDuration;
-  const gain = Number(media.bgmGainDb);
+  // 先把这首背景音归一到基准响度，再套 bgmGainDb（见 resolveBgmGain）
+  // 同上：不能写成 Number.isFinite(Number(media.bgmTargetLufs))，
+  // null 会被转成 0 从而误判成「配了基准」，白量一遍还算出错的增益。
+  const hasTarget = media.bgmTargetLufs !== null && media.bgmTargetLufs !== undefined
+    && media.bgmTargetLufs !== "" && Number.isFinite(Number(media.bgmTargetLufs));
+  const measured = hasTarget ? await measureLoudness(ffmpeg, bgmPath) : null;
+  const { gain, normalized, delta } = resolveBgmGain(media.bgmGainDb, measured, media.bgmTargetLufs);
+  onProgress?.(0);
   const filter = [
     `[0:a]adelay=${Math.round(intro * 1000)}:all=1[voice]`,
     `[1:a]volume=${gain}dB,atrim=0:${total.toFixed(3)},afade=t=out:st=${fadeStart.toFixed(3)}:d=${fade.toFixed(3)}[bgm]`,
@@ -144,7 +204,18 @@ export async function renderAudio(config, { voicePath, bgmPath, outputAudio, onP
     "-progress", "pipe:1", "-nostats", outputAudio
   ], { duration: total, onProgress, signal });
   const outputAudioSize = (await stat(outputAudio)).size;
-  return { voiceDuration, totalDuration: total, outputAudio, outputAudioSize };
+  return {
+    voiceDuration, totalDuration: total, outputAudio, outputAudioSize,
+    // 记下这次背景音到底被推了多少 —— 成品听感不对时，第一个要看的就是它
+    bgm: {
+      path: bgmPath,
+      measuredLufs: measured,
+      targetLufs: normalized ? Number(media.bgmTargetLufs) : null,
+      normalized,
+      appliedGainDb: Number(gain.toFixed(2)),
+      correctionDb: Number(delta.toFixed(2))
+    }
+  };
 }
 
 export function resolveSequencedVideoPlan(totalDuration, introDuration, endFadeSeconds = 5) {
