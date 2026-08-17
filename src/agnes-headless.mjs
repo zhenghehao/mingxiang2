@@ -55,8 +55,10 @@ const DEFAULTS = {
   // 循环接缝的交叉淡化秒数。0 = 关掉（直接用模型给的原片）。
   // 实测 0.4 秒最好，拉长到 0.8/1.2 秒没有改善，反而更糊。
   loopFadeSeconds: 0.4,
-  candidateCount: 6,
-  reservedForVideo: 3,
+  candidateCount: 5,
+  // 必须 >= candidateCount。视频限流是每分钟 1 次（见下面 settings 里的实测记录），
+  // N 条候选并行提交，视频 key 不足 N 就有 N-reserved 条各等 65 秒。
+  reservedForVideo: 5,
   // 实测一条 5 秒循环视频从提交到 completed 约 127 秒，排队时长会浮动，
   // 200 × 3 秒 = 10 分钟的预算留足余量。轮询本身很轻，等不到才是真问题。
   videoPollMax: 200,
@@ -135,9 +137,14 @@ function settings(config = {}) {
   if (!apiKeys.length) throw new Error("Agnes headless 没有配置 apiKeys");
 
   // ── key 分池 ────────────────────────────────────────────────────────────
-  // 生图和生视频原来共用同一个池。生图会把 6 张请求平摊到所有 key 上，
-  // 紧接着的生视频撞上「每分钟 2 次」的硬限流时，换 key 重试也没用 ——
-  // 每个 key 都刚被生图用过。所以从池子尾部切出一段只给视频，生图永远不碰。
+  // 生图和生视频原来共用同一个池。生图会把 N 张请求平摊到所有 key 上，
+  // 紧接着的生视频撞上硬限流时，换 key 重试也没用 —— 每个 key 都刚被生图用过。
+  // 所以从池子尾部切出一段只给视频，生图永远不碰。
+  //
+  // 2026-08-14 实测：视频限流是**每分钟 1 次**，网关原话
+  // 「allows 1 requests per 1 minute(s)」。这里长期写的「每分钟 2 次」是错的，
+  // 而这个数直接决定 reservedForVideo 要留多少 —— N 条候选并行提交时，
+  // 视频 key 不足 N 就有 N-reserved 条各等 65 秒。
   //
   // key 太少时分池反而有害（生图并发被压到 1），所以只在池子够大时才分。
   const pools = resolveKeyPools(apiKeys, merged.videoKeys, merged.reservedForVideo);
@@ -603,7 +610,7 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
  *
  * 原来这里写死从 0 开始（`pick(videoKeys, attempt)`，attempt 是**重试**次数）。
  * 单条视频时没问题；一旦要并行出 N 条，N 个调用会在第一次尝试时全部抓同一把 key，
- * 而视频那边是「每分钟 2 次」的硬限流 —— 等于自己把自己打成 429，
+ * 而视频那边是「每分钟 1 次」的硬限流 —— 等于自己把自己打成 429，
  * 然后每条各等 65 秒。并行出 6 条的方案就是被这一行挡住的。
  */
 export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick, keyIndex = 0 } = {}) {
