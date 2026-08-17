@@ -70,12 +70,12 @@
     "ffmpegPath": "bundled",
     "ffprobePath": "bundled",
     "introSeconds": 2,
-    "bgmGainDb": -15,
+    "bgmGainDb": -7,
     "fadeSeconds": 25,
     "videoQuality": "balanced",
     "width": 1080,
     "height": 1920,
-    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。2026-08-14：introSeconds 从 10 改成 2（本机试听后定的），speed 从 0.78 改成 0.8 —— 两处都是让云端跟上本机，否则同一套代码两边出的片不是一个味道。"
+    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。2026-08-14：introSeconds 从 10 改成 2、speed 从 0.78 改成 0.8、bgmGainDb 从 -15 改成 -7，三处都是本机试听后定的，云端必须跟上，否则同一套代码两边出的片不是一个味道。bgmGainDb 提了 8dB 是因为这类内容留白极多（随便一处停顿就有近 3 秒），那些时候背景音是唯一在响的东西，按「垫在连续人声下面」的标准（低 15~25dB）去压，说话时刚好，留白处就空了。"
   },
   "agnes": {
     "enabled": false,
