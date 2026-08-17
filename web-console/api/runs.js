@@ -24,7 +24,11 @@ export default async function handler(req, res) {
   // 跳过的记录对人没有信息量：它只说明「定时来过、但开关是关的」，而开关状态
   // 页面上本来就写着。留着只会淹掉有成品的那几条。
   const 有效 = all.filter((r) => r.conclusion !== "skipped");
-  const runs = 有效.slice(0, 20).map((r) => ({
+  // 默认还是 20 条 —— 一屏能看完，翻页交给「更多」按钮。
+  // 上限锁在 100：GitHub 一次最多返回 100 条 run，要更多得翻页，
+  // 而攒到 100 条还找不到想要的，靠滚动也不是办法了。
+  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 20));
+  const runs = 有效.slice(0, limit).map((r) => ({
     id: r.id,
     number: r.run_number,
     name: r.name,
@@ -41,6 +45,8 @@ export default async function handler(req, res) {
   return res.status(200).json({
     runs,
     total: 有效.length,
+    // 前端据此决定「更多」按钮还显不显示
+    hasMore: 有效.length > runs.length,
     // 让前端能告诉用户「隐藏了 N 条定时跳过」，免得以为记录丢了
     skippedHidden: all.length - 有效.length
   });

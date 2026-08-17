@@ -81,6 +81,10 @@
 .art-del:hover:not(:disabled){background:rgba(255,107,107,.12)}
 .art-del:disabled{opacity:.5;cursor:default}
 .art-del.armed{background:rgba(255,107,107,.16);font-weight:600}
+.more-btn{display:block;width:100%;margin-top:10px;padding:10px;border:1px dashed rgba(255,255,255,.2);
+  background:none;color:inherit;border-radius:8px;cursor:pointer;font-size:13px;opacity:.75}
+.more-btn:hover:not(:disabled){opacity:1;border-style:solid}
+.more-btn:disabled{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
@@ -236,11 +240,15 @@ function when(iso) {
 
 const size = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
 
+// 列表默认显示多少条。点「更多」往上加，load() 之间要保持住 ——
+// 否则轮询一刷新就缩回 20 条，刚翻出来的记录又没了。
+let listLimit = 20;
+
 async function load() {
   hide($("listMsg"));
-  let runs, skippedHidden = 0;
+  let runs, skippedHidden = 0, hasMore = false, total = 0;
   try {
-    ({ runs, skippedHidden = 0 } = await api("/api/runs"));
+    ({ runs, skippedHidden = 0, hasMore = false, total = 0 } = await api("/api/runs?limit=" + listLimit));
   } catch (e) {
     if (e.message !== "no_session") show($("listMsg"), e.message, "bad");
     return;
@@ -270,7 +278,7 @@ async function load() {
     dot.style.background = face.color;
     const name = document.createElement("div");
     name.className = "run-name";
-    name.textContent = `#${run.number} ${run.name}`;
+    name.textContent = `#${run.number} ${run.title || run.name}`;
     const meta = document.createElement("div");
     meta.className = "run-meta";
     meta.innerHTML = "";
@@ -291,6 +299,22 @@ async function load() {
 
     card.onclick = () => { openRun = openRun === run.id ? null : run.id; load(); };
     box.append(card);
+  }
+
+  // 「更多」：一次多要 20 条。没有更多了就不显示这个按钮，
+  // 免得点了没反应还以为是坏的。
+  if (hasMore) {
+    const more = document.createElement("button");
+    more.className = "more-btn";
+    more.textContent = `更多（已显示 ${runs.length} / 共 ${total} 条）`;
+    more.onclick = (e) => {
+      e.stopPropagation();
+      more.disabled = true;
+      more.textContent = "读取中…";
+      listLimit += 20;
+      load();
+    };
+    box.append(more);
   }
 
   // 有在跑的就保持轮询，全部跑完就停下来，别白烧请求。

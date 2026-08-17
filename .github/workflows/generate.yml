@@ -1,5 +1,11 @@
 name: 生成一集冥想
 
+# 列表里每条 run 的标题。不设的话所有记录都叫「生成一集冥想」，
+# 攒上十几条完全分不清谁是谁 —— 只能一条条点开看。
+# 这里只能用表达式，取不到 shell 里算出来的值，所以定时触发（inputs 全空）
+# 显示成「定时」，具体时段在 artifact 名字里能看到。
+run-name: 冥想 ${{ inputs.date || '今天' }} · ${{ inputs.brief || '定时' }} · ${{ inputs.minutes || '10' }}分钟
+
 on:
   workflow_dispatch:
     inputs:
@@ -152,6 +158,17 @@ jobs:
             if [ "$H" -ge 11 ] && [ "$H" -lt 17 ]; then BRIEF="中午"; else BRIEF="晚上"; fi
             echo "定时触发：北京时间 ${H} 点 → 时段「${BRIEF}」"
           fi
+          DATE="${{ inputs.date }}"
+          # 留空＝今天。这里必须按北京时间算，不能用 runner 的 UTC ——
+          # UTC 16:00 之后北京已经是第二天，成品名会比实际晚一天。
+          [ -z "$DATE" ] && DATE=$(TZ=Asia/Shanghai date +%Y-%m-%d)
+          # 传给「上传成品」那一步用：这两个值是在本步骤的 shell 里算出来的，
+          # 不写进 GITHUB_ENV 的话下一步拿不到，artifact 名就只剩一个流水号。
+          {
+            echo "RUN_DATE=$DATE"
+            echo "RUN_BRIEF=$BRIEF"
+            echo "RUN_CLOCK=$(TZ=Asia/Shanghai date +%H%M)"
+          } >> "$GITHUB_ENV"
           node scripts/run-once.mjs \
             --date "${{ inputs.date }}" \
             --brief "$BRIEF" \
@@ -162,7 +179,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: 冥想成品-${{ github.run_number }}
+          # 名字里带齐「哪天、什么时段、几点跑的、第几次」—— 下载列表里一眼能认出来。
+          # 只有流水号的话，攒上十几条就完全分不清谁是谁了。
+          # 冒号斜杠等字符 GitHub 不接受，所以用连字符拼。
+          name: 冥想成品-${{ env.RUN_DATE }}-${{ env.RUN_BRIEF }}-${{ env.RUN_CLOCK }}-第${{ github.run_number }}次
           path: |
             output/**/音频/*.mp3
             output/**/视频/*.mp4
