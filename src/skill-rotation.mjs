@@ -122,11 +122,64 @@ export async function loadPhraseHistory(config, workspaceRoot) {
 }
 
 /**
- * 从池子里挑下一句。复用 pickNextSkill 的 LRU 语义，只是这里的「名字」是整句话。
+ * 从池子里挑下一句：随机，但不挑上一次刚用过的那句。
  * 池子为空时返回空串，由调用方决定不注入。
+ *
+ * 2026-08-18 从 LRU 改成 random。LRU 在**历史为空**时是死的：所有句子并列
+ * rank -1，pickNextSkill 的循环里 `a === -1 && b !== -1` 和 `a > b` 都不成立，
+ * 谁也顶不掉谁，于是永远返回 pool[0]。
+ *
+ * 而云端的历史**永远是空的** —— 台账写在 output/语句轮动.json，output/* 在
+ * .gitignore 里，Actions 每次都是干净 runner。结果就是每一次云端跑：
+ * 古诗册开场必是「床前明月光」（池子第一条），落款必是「晚安，亲爱的」（同理）。
+ * 用户的原话是「为什么诗歌每次都是窗前明月光」和「中午怎么会出现晚安」，
+ * 两条抱怨是同一个 bug。本机因为台账留着，反而看不出来。
+ *
+ * random 不依赖历史也能散开，历史有的时候还能顺带保证不连着重样 ——
+ * 正是文体轮动 2026-08-14 从 lru 改 random 时的同一个理由。
  */
-export function pickPhrase(pool, history = []) {
-  return pickNextSkill(Array.isArray(pool) ? pool.filter(Boolean) : [], history);
+export function pickPhrase(pool, history = [], { random = Math.random } = {}) {
+  return pickRandomSkill(Array.isArray(pool) ? pool.filter(Boolean) : [], history, { random });
+}
+
+/**
+ * 取某个 skill 在某个时段该用的句子池。
+ *
+ * 时段覆盖写在 phrases["中午"] 底下，结构和顶层一样（opening 按册分池、
+ * closing 是全局数组）。没有覆盖就用顶层的（＝晚上）。
+ *
+ * 关键约束：**opening 的时段覆盖不回落到中午的 default**。
+ * 六册的首句是硬规则（B 册必须是古诗原句、C 册必须是「很久以前」式时间滑门、
+ * F 册必须是不带「你」的客观陈述）。哪一册没写中午版，说明它的首句本来就
+ * 不分时段（「很久以前，森林里有一间小屋」中午念也没毛病），这时候硬塞一句
+ * 中午 default（「这个上午已经过去了」）会直接违反该册的首句要求。
+ * 只有本来就在吃顶层 default 的册，才允许改吃中午 default。
+ *
+ * closing 是全局池，没有分册规则，整池替换即可。
+ */
+export function poolForPeriod(phrases, kind, skillName, period) {
+  // 有些册的首句是 skill 自己按本篇选题挑的（古诗册要一句贴合题目意境的名句），
+  // 代码看不见题目，只看得见册名 —— 从固定句池里挑必然对不上，
+  // 还会把「万首名句」缩成「池子里那几句」。返回空池＝那段提示词整段不出现。
+  if (kind === "opening" && Array.isArray(phrases?.自选首句) && phrases.自选首句.includes(skillName)) {
+    return [];
+  }
+  const 顶层 = phrases?.[kind];
+  const 覆盖 = period ? phrases?.[period]?.[kind] : null;
+  if (!覆盖) return poolFor(顶层, skillName);
+  // 数组＝全局池（落款）：整池换掉
+  if (Array.isArray(覆盖)) return 覆盖.filter(Boolean);
+  if (typeof 覆盖 !== "object") return poolFor(顶层, skillName);
+
+  const 本册覆盖 = 覆盖[skillName];
+  if (Array.isArray(本册覆盖) && 本册覆盖.length) return 本册覆盖.filter(Boolean);
+
+  const 本册顶层 = 顶层 && !Array.isArray(顶层) ? 顶层[skillName] : null;
+  const 有分册规则 = Array.isArray(本册顶层) && 本册顶层.length;
+  if (!有分册规则 && Array.isArray(覆盖.default) && 覆盖.default.length) {
+    return 覆盖.default.filter(Boolean);
+  }
+  return poolFor(顶层, skillName);
 }
 
 /**

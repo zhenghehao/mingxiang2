@@ -77,6 +77,9 @@ const STRING_VARS = {
 /** 列表类：逗号/换行分隔。 */
 const LIST_VARS = {
   MEDITATION_SKILL_ROOTS: "skillRoots",
+  // 文本四步的 key 池。云端只有这一条路能把 100 把 key 递进来 ——
+  // 单把的 TEXT_API_KEY 仍然有效，池子为空时自动退回它。
+  TEXT_API_KEYS: "textProvider.apiKeys",
   AGNES_API_KEYS: "agnesHeadless.apiKeys",
   AGNES_VIDEO_KEYS: "agnesHeadless.videoKeys",
   SENSENOVA_SCORER_KEYS: "agnesHeadless.scorerKeys",

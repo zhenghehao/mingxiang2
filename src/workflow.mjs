@@ -7,9 +7,9 @@ import {
   generateAgnesVisuals
 } from "./agnes.mjs";
 import { agnesHeadlessEnabled, generateAgnesVisualsHeadless } from "./agnes-headless.mjs";
-import { callTextEngine, synthesizeMinimax } from "./providers.mjs";
+import { callTextEngine, synthesizeMinimax, resolveKeyPool } from "./providers.mjs";
 import { resolveSlots } from "./skills.mjs";
-import { loadPhraseHistory, loadSkillHistory, pickPhrase, pickScriptSkill, poolFor, recordPhraseUse, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
+import { loadPhraseHistory, loadSkillHistory, pickPhrase, pickScriptSkill, poolForPeriod, recordPhraseUse, recordSkillUse, scriptSkillPool } from "./skill-rotation.mjs";
 import {
   CancelledError, probeDuration, renderAudio, renderVideo, resolveMediaBinary, resolveVideoProfile, selectDatedAsset
 } from "./media.mjs";
@@ -135,6 +135,18 @@ export const RERUN_PLAN = {
 
 /** 文本阶段每步的重试次数（只针对接口没接通的情况，见 isTransientTextError）。 */
 export const TEXT_STAGE_RETRIES = 2;
+
+/**
+ * 这一步最多重试几次。
+ *
+ * 单把 key 时维持原来的 2 次：重试只是在赌网络抖动，赌三次够了。
+ * 有 key 池时值得多试几次 —— 每次重试都会换一把 key（见 callStage 的 keyIndex），
+ * 所以第 4 次和第 1 次不是同一场赌局，而是换了个额度池重来。
+ * 封顶 5 次是因为写稿这步单次就要几分钟，再多等下去不如让人知道出事了。
+ */
+export function resolveStageRetries(poolSize) {
+  return poolSize > 1 ? Math.min(5, poolSize) : TEXT_STAGE_RETRIES;
+}
 
 /**
  * 这个错误值不值得重试？
@@ -497,10 +509,60 @@ function buildStageProviders(config) {
       model: name,
       temperature: base.temperature,
       authHeader: base.authHeader,
-      authPrefix: base.authPrefix
+      authPrefix: base.authPrefix,
+      // key 池按 textProvider 走，四步共用同一批 —— 它们本来就是同一个网关、
+      // 同一个账号，分池只会让每一份都更容易撞限流。
+      apiKeys: base.apiKeys
     };
   }
   return out;
+}
+
+/**
+ * 写稿提示词末尾那条结尾铁律。
+ *
+ * 六册的 §4.4 把「午休＝wake=true＝必须完整唤醒」写成铁律，这套代码原来也
+ * 硬编码成「中午结尾必须完整唤醒」。那是 NSDR 午睡的标准做法，但不是这个频道的形态：
+ * 观众是躺着刷视频、想睡过去，不是掐着表午睡等人叫起来。2026-08-18 用户实听反馈
+ * 「本来是让大家休息的，最后反而让大家慢慢睁开眼睛，那不是更清醒了」，
+ * 并把定位讲死了：「唤醒自然有他们的闹钟，我们的目的是让他们更好地入睡，
+ * 至于怎么醒来，那是他自己的事」。
+ *
+ * 所以默认两个时段都不唤醒；noonWake=true 才翻回 NSDR 那套。
+ * skill 里 §4.5 唤醒程序原样保留 —— 关掉的是「什么时候用它」，不是它本身。
+ *
+ * 中午那条禁夜间词是第二道闸：落款已经由代码从中午池里挑（挑不到「晚安」），
+ * 但正文里模型自己写一句「愿你有个好梦」照样破功，而那正是用户实际听到的问题。
+ */
+/**
+ * 中午的稿子里混进夜间说辞了吗。
+ *
+ * 起因：2026-08-18 用户实听中午的成品，「中午的午休啊，怎么会出现晚安」。
+ * 提示词那一层已经堵了两道（落款从中午专属池里挑、§结尾铁律点名禁夜间词），
+ * 但提示词是**要求**不是**保证** —— 模型照样可能自己写一句「愿你有个好梦」。
+ * 所以这里再加一道**会拦下来**的闸，不是打印一行警告了事。
+ *
+ * 分两档，因为误判的代价不一样：
+ *
+ * - 硬拦：「晚安」「好梦」这类只可能是对听者说的道别话。中午出现就是错的，
+ *   不存在「它其实是引文的一部分」这种解释。
+ * - 只报警：「今夜」「天亮」这些**可能出现在引用的诗句里**（B 册第一句就是诗句原文，
+ *   而「今夜偏知春气暖」这类句子本身没有毛病）。为它们把整篇打回去，
+ *   会在中午 + 古诗册这个组合上频繁误伤。
+ */
+export function findNoonNightWords(text) {
+  const 正文 = String(text || "");
+  const 硬拦词 = ["晚安", "好梦", "一夜好眠", "安睡一夜", "睡个整觉"];
+  const 提醒词 = ["今夜", "今晚", "这一夜", "一整夜", "天亮", "明早", "明天早上"];
+  const 命中 = (词表) => 词表.filter((w) => 正文.includes(w));
+  return { 硬拦: 命中(硬拦词), 提醒: 命中(提醒词) };
+}
+
+export function resolveEndingRule(period, noonWake = false) {
+  if (period === "中午" && noonWake) return "中午结尾必须完整唤醒，晚上结尾不得唤醒。";
+  const 不唤醒 = "结尾**不得唤醒**：不出现睁开眼睛、活动手指脚趾、伸展身体、恢复精神、感觉清醒这类内容，收在睡着上。";
+  if (period !== "中午") return 不唤醒;
+  return 不唤醒 + "这是**中午**的稿子：全文不得出现「晚安」「好梦」「今夜」「一整夜」「天亮」这类夜间词，收尾说的是睡一会儿，不是睡一整晚。";
 }
 
 export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], skillHistory = [], phrases = {}, phraseHistory = {}, stages = null, reuse = null } = {}) {
@@ -552,13 +614,32 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
     tts: { start: 37, end: 48, startMessage: "正在优化停顿、语气与呼吸提示", doneMessage: "配音文本已经优化" },
     copy: { start: 49, end: 58, startMessage: "正在整理跨平台发布文案", doneMessage: "发布文案已经整理" }
   };
+  // key 池的游标。
+  //
+  // 起点随机：固定从第 0 把开始的话，第 1 把会先被烧穿 5 小时配额，后面几十把
+  // 一次都轮不到 —— 备了池子等于没备。
+  //
+  // 游标**贯穿整轮、只进不退**，不是每步都从同一个起点重新数。
+  // 2026-08-18 实测踩过：起点是整轮固定的时候，那一轮的起点恰好落在一个没有
+  // glm-5.2 配额的账号上，于是写稿、转写、文案**每一步都先在同一把死 key 上
+  // 撞一个 429**，才换下一把 —— 三步白烧三次调用，而且日志里看着像是随机故障。
+  // 只进不退之后，一把在这一轮里出过错的 key 不会再被这一轮碰到第二次。
+  const 池大小 = resolveKeyPool(config?.textProvider).length;
+  const 最多重试 = resolveStageRetries(池大小);
+  let key游标 = 池大小 > 1 ? Math.floor(Math.random() * 池大小) : 0;
+
   const callStage = async (slot, instructions, stageInput, { complete = true } = {}) => {
     const stage = stageProgress[slot];
     progress({ step: slot, status: "running", progress: stage.start, message: stage.startMessage });
     let result;
     for (let attempt = 1; ; attempt += 1) {
       try {
-        result = await callTextEngine(config, providers[slot], instructions, stageInput, { mode: engineMode });
+        // 每次调用都往前走一格。超时和 429 都是「这一把这会儿不行」，
+        // 换一把往往立刻就通；用同一把重发，等的是同一个限流窗口过去。
+        result = await callTextEngine(config, providers[slot], instructions, stageInput, {
+          mode: engineMode,
+          keyIndex: key游标
+        });
         break;
       } catch (error) {
         // 只重试「这次没接通」，不重试「模型不接受这个请求」。
@@ -566,12 +647,17 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
         // 模型名错、参数非法这些重发一万次也是同样的错，重试只是白等。
         // （2026-08-10 实测：六篇里动漫那篇 420s 超时，整篇丢掉，而同一批
         //   另外五篇都正常出稿 —— 典型的抖动，本该自动重来。）
-        if (attempt > TEXT_STAGE_RETRIES || !isTransientTextError(error)) throw error;
+        // 这一把刚出过错，先挪开再谈重试 —— 挪的动作要发生在「决定重不重试」
+        // 之前，否则抛错退出时游标停在坏 key 上，下一步又从它开始。
+        key游标 += 1;
+        if (attempt > 最多重试 || !isTransientTextError(error)) throw error;
         progress({
           step: slot,
           status: "running",
           progress: stage.start,
-          message: `${stage.startMessage}（接口未响应，第 ${attempt} 次重试）`,
+          message: 池大小 > 1
+            ? `${stage.startMessage}（接口未响应，换第 ${attempt + 1} 把 key 重试）`
+            : `${stage.startMessage}（接口未响应，第 ${attempt} 次重试）`,
           detail: error.message
         });
       }
@@ -639,17 +725,21 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
       ? `已检查 ${topicHistory.length} 个历史题目 · ${topicRun?.model || topicRun?.engine || "文本引擎"}`
       : "本次重跑不重新选题"
   });
+  const 结尾铁律 = resolveEndingRule(period, config.noonWake === true);
+
   // 开场引导语和结尾落款由**代码**从池子里轮，不让模型自己「轮换使用」——
   // 模型没有跨篇记忆，说了也做不到（实测六篇里三篇结尾都是「晚安，亲爱的」，
   // 而各册规范都写着要轮换）。池子和历史由调用方传入，选中的结果随返回值带出去记账。
-  const 开场语 = pickPhrase(poolFor(phrases.opening, slots.script?.name), phraseHistory.opening);
-  const 结尾语 = pickPhrase(poolFor(phrases.closing, slots.script?.name), phraseHistory.closing);
+  // 取池要带上时段：顶层那套是**夜间**的（八条落款条条是「晚安 / 好梦 / 夜还长」，
+  // 开场是「夜深了」「今晚有雾」），中午照搬就会出现「午休稿说晚安」。
+  const 开场语 = pickPhrase(poolForPeriod(phrases, "opening", slots.script?.name, period), phraseHistory.opening);
+  const 结尾语 = pickPhrase(poolForPeriod(phrases, "closing", slots.script?.name, period), phraseHistory.closing);
   const 语句要求 = [
     开场语 ? `正文的第一句用这句：「${开场语}」\n**它就是本篇的开场首句**，已经按本 Skill 的开场手法写好了 —— 从它自然往下接着写即可，不要在它前面加任何句子，也不要在它之后再补一句同类的开场。` : "",
     结尾语 ? `落款用这一句收尾：「${结尾语}」。它是**最后一句**，放在本篇收尾手法完成**之后**，不替代收尾手法。` : ""
   ].filter(Boolean).join("\n");
   let script = want("script")
-    ? await callStage("script", slots.script.content, `日期：${date}\n时段：${period}\n篇幅原则：${lengthPrinciple}。先让结构、呼吸、身体扫描、意象旅程和结尾自然完成；不得填充空话，也不得省略必要段落。\n已自动选择且查重通过的选题：\n${topic}\n${语句要求 ? `\n${语句要求}\n` : ""}\n请完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；中午结尾必须完整唤醒，晚上结尾不得唤醒。`)
+    ? await callStage("script", slots.script.content, `日期：${date}\n时段：${period}\n篇幅原则：${lengthPrinciple}。先让结构、呼吸、身体扫描、意象旅程和结尾自然完成；不得填充空话，也不得省略必要段落。\n已自动选择且查重通过的选题：\n${topic}\n${语句要求 ? `\n${语句要求}\n` : ""}\n请完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；${结尾铁律}`)
     : String(reuse?.script || "");
   if (!want("script")) {
     if (!script) throw new Error("上次的原稿记录为空，无法在复用原稿的前提下重跑");
@@ -669,6 +759,49 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   // 把耗时和费用翻倍。
   //
   // 所以这里只把事实说出来，让人看得见：要不要重跑由用户决定。
+  // 中午稿的夜间说辞检查。放在篇幅检查之前：篇幅短了成品还能用，
+  // 午休片里说「晚安」不能用。
+  //
+  // 和篇幅那条不同，这里**会重写**。篇幅那条不重写的理由是「差几十个字的成品
+  // 仍然可用，不值得为它把耗时和费用翻倍」—— 这条不成立于此：说错时段的片子
+  // 是直接报废的，重写一次是唯一比它更便宜的选择。
+  if (want("script") && period === "中午") {
+    let 命中 = findNoonNightWords(script);
+    if (命中.硬拦.length) {
+      progress({
+        step: "script",
+        status: "running",
+        progress: 30,
+        message: `中午稿里出现夜间说辞「${命中.硬拦.join("、")}」，正在重写`,
+        detail: "午休的片子不能说晚安"
+      });
+      script = await callStage("script", slots.script.content, [
+        `日期：${date}`, `时段：${period}`,
+        `篇幅原则：${lengthPrinciple}。`,
+        `已自动选择且查重通过的选题：`, topic,
+        语句要求 ? `\n${语句要求}\n` : "",
+        `上一稿在**中午**的片子里写了「${命中.硬拦.join("」「")}」，这是错的：中午是午休，不是过夜。`,
+        `这一稿全文不得出现这些词，也不得出现任何同义的过夜道别（一夜好眠、安睡到天亮之类）。`,
+        `收尾说的是「好好休息一会儿」这个意思 —— 睡一小觉，不是睡一整晚。`,
+        `请重新完成可直接配音的催眠冥想文稿。开场保持自然完整句，之后逐渐放慢；${结尾铁律}`
+      ].filter(Boolean).join("\n"));
+      命中 = findNoonNightWords(script);
+      if (命中.硬拦.length) {
+        // 重写过一次还是这样，说明不是抖动。这时候放行等于交付一个报废的片子，
+        // 而后面还要烧掉配音、五条视频和合成的全部时间与额度。
+        throw new Error(`中午的稿子重写后仍然出现夜间说辞「${命中.硬拦.join("、")}」，已停止生成`);
+      }
+    }
+    if (命中.提醒.length) {
+      progress({
+        step: "script",
+        status: "running",
+        progress: 34,
+        message: `中午稿里有「${命中.提醒.join("、")}」，请留意是不是引文之外的地方用了`,
+        detail: "这几个词可能出现在引用的诗句里，所以只提醒不重写"
+      });
+    }
+  }
   if (want("script") && durationPlan) {
     const scriptChars = countHanCharacters(script);
     if (scriptChars < durationPlan.minChars) {
@@ -1339,7 +1472,16 @@ export async function resumeMedia(config, input, workspaceRoot, { onProgress, si
   ]) progress({ step, status: "done", progress: 60, message });
 
   ensureLive();
-  const agnesTask = startAgnesVisualTask(config, text, base, null, signal);
+  // progress 必须传进去，不能给 null。
+  //
+  // 给 null 的后果 2026-08-18 亲身撞到：Agnes 内部那些「第 3 张图重试」
+  // 「第 4 条视频超时」的说明全被丢掉，外面只剩一句「正在通过 Agnes 生成画面」，
+  // 然后 34 分钟后直接冒出「第 1/2 个成片」—— 说好的 5 条候选只剩 2 条，
+  // 而在哪一步没的、为什么没的，日志里一个字都查不到。
+  //
+  // runAll 那条路径一直是传 progress 的（见上面 startAgnesVisualTask 的调用）。
+  // 又一处「两条路径各写各的」，和 callTextProvider 那个是同一类毛病。
+  const agnesTask = startAgnesVisualTask(config, text, base, progress, signal);
   const voicePath = path.join(runDir, `voice.${config.minimax.format}`);
   const bgmPath = await selectDatedAsset(config.media.bgmRoot, date, [".mp3", ".wav", ".flac", ".m4a"], { strategy: "random" });
   const outputAudio = path.join(audioDir, `${base}.mp3`);

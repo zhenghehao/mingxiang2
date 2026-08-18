@@ -40,6 +40,11 @@ concurrency:
   group: generate-meditation
   cancel-in-progress: false
 
+# 跑完要把 state/ 下的台账提交回来（见最后一步）。默认令牌在公开仓库上
+# 通常只有只读权限，不显式写这一行就会在 push 那步 403。
+permissions:
+  contents: write
+
 jobs:
   generate:
     runs-on: ubuntu-latest
@@ -51,6 +56,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # 把长期记忆搬进 output/ —— 代码是按 config.app.outputRoot 找台账的。
+      # 不做这一步的话云端每次都从零开始：文体轮动的「不与上一篇重样」失效
+      # （实测连着两篇同册 16.9%）、选题查重清单永远是空的。来龙去脉见 state/README.md。
+      - name: 恢复台账
+        run: |
+          mkdir -p output
+          for f in 写稿轮动.json 语句轮动.json 选题库.json; do
+            [ -f "state/$f" ] && cp "state/$f" "output/$f" && echo "  ← $f"
+          done
+          true
 
       - uses: actions/setup-node@v4
         with:
@@ -192,3 +208,43 @@ jobs:
             output/**/文本/*.json
           if-no-files-found: warn
           retention-days: 90
+
+      # 记账。放在上传之后：成品先落袋，台账写回失败也不至于连片子一起丢。
+      #
+      # 不加 if: always() —— 跑挂了的那次没产出，它的「用过这一册」不该记进去。
+      # 并发上有 concurrency: generate-meditation 兜着，同一时刻只有一条在跑，
+      # 但人可能正好在本机 push，所以推之前先 rebase 一次。
+      - name: 保存台账
+        run: |
+          for f in 写稿轮动.json 语句轮动.json 选题库.json; do
+            [ -f "output/$f" ] && cp "output/$f" "state/$f" && echo "  → $f"
+          done
+          # 选题库里每条都带一个 source（那条选题是从哪个文件扫出来的），
+          # 值是 runner 上的绝对路径。**这是公开仓库**，路径进去没有任何用处，
+          # 而且本机跑出来的记录会把 /Users/<用户名>/… 一起带进来。
+          # 查重只认 normalizedTitle，删掉不影响任何功能。
+          python3 - <<'PYEOF'
+          import json, pathlib
+          p = pathlib.Path("state/选题库.json")
+          if p.exists():
+              d = json.loads(p.read_text(encoding="utf-8"))
+              n = 0
+              for t in d.get("topics", []):
+                  if t.pop("source", None) is not None:
+                      n += 1
+              p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+              print(f"  已清掉 {n} 条记录里的本机路径")
+          PYEOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          # 没变化就不提交 —— 复用选题重跑这类情况台账可能一个字都没动，
+          # 那时候提交一条空 commit 只是往历史里灌噪音。
+          if git diff --cached --quiet; then
+            echo "台账无变化，不提交"
+            exit 0
+          fi
+          git commit -m "记账：第 ${{ github.run_number }} 次（${RUN_DATE} ${RUN_BRIEF}）"
+          # 推之前拉一次。--rebase 而不是 merge：台账是纯数据，不需要合并提交。
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          git push origin "HEAD:${GITHUB_REF_NAME}"

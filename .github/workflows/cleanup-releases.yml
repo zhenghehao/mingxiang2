@@ -1,0 +1,87 @@
+name: 清理过期成品
+
+# 成品发成 Release 之后没人会记得删。artifact 有 90 天自动过期，
+# Release 没有 —— 不管的话攒一年就是几十 GB 躺在那儿。
+#
+# 只删 ep- 开头的 tag。这条限制是这个 workflow 唯一的安全边界：
+# 手工建的 Release、以后可能有的版本 tag，都不会被它碰到。
+# 加新的成品 Release 时务必沿用 ep- 前缀，否则清不掉；
+# 反过来，任何不想被自动删的东西，别用这个前缀。
+
+on:
+  schedule:
+    # UTC 18:00 = 北京时间凌晨 2 点。挑这个点是因为生成任务
+    # （每 2 小时一次）在这个时段撞车概率最低。
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 保留几天内的（更早的删掉）
+        required: false
+        default: "7"
+      dry_run:
+        description: 只看会删什么，不真删
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 扫描并清理
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # 定时触发时 inputs 是空的：默认保留 7 天、真删。
+          # 手动触发默认 dry_run=true —— 想看看会删什么的时候不该真删。
+          DAYS: ${{ inputs.days || '7' }}
+          DRY: ${{ inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d "-${DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
+          echo "保留 $CUTOFF 之后的成品；更早的删掉（dry_run=$DRY）"
+          echo
+
+          # --paginate：Release 攒多了单页返回不全，漏掉的正是最老的那些
+          gh api --paginate "/repos/$REPO/releases" \
+            --jq '.[] | select(.tag_name | startswith("ep-")) | "\(.tag_name)\t\(.created_at)\t\(.id)"' \
+            > /tmp/releases.tsv || true
+
+          total=$(wc -l < /tmp/releases.tsv | tr -d ' ')
+          echo "ep- 开头的 Release 共 $total 个"
+          [ "$total" = "0" ] && { echo "没有可清理的"; exit 0; }
+
+          deleted=0
+          kept=0
+          while IFS=$'\t' read -r tag created id; do
+            [ -z "$tag" ] && continue
+            if [[ "$created" < "$CUTOFF" ]]; then
+              # 附件体积一并报出来，好知道到底腾了多少
+              size=$(gh api "/repos/$REPO/releases/$id" --jq '[.assets[].size] | add // 0')
+              mb=$(( size / 1048576 ))
+              if [ "$DRY" = "true" ]; then
+                echo "  [预演] 会删 $tag（$created，${mb}MB）"
+              else
+                # 先删 Release，再删 tag —— 只删 Release 的话 tag 会留下来，
+                # 下次同名发布会撞上一个已存在的 tag 然后失败。
+                gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag 2>/dev/null \
+                  && echo "  ✓ 已删 $tag（$created，${mb}MB）" \
+                  || echo "  ✗ 删除失败 $tag"
+              fi
+              deleted=$((deleted + 1))
+            else
+              kept=$((kept + 1))
+            fi
+          done < /tmp/releases.tsv
+
+          echo
+          if [ "$DRY" = "true" ]; then
+            echo "预演结束：会删 $deleted 个，保留 $kept 个。真删请用 dry_run=false 手动触发，或等定时任务。"
+          else
+            echo "清理完成：删了 $deleted 个，保留 $kept 个。"
+          fi

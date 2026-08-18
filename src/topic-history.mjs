@@ -113,7 +113,12 @@ export async function recordTopic(config, workspaceRoot, value, extra = {}) {
   if (!record) throw new Error("自动选题结果缺少标题，无法写入选题库");
   const file = historyFile(config, workspaceRoot);
   const current = await loadTopicHistory(config, workspaceRoot);
-  const topics = uniqueRecords([record, ...current]);
+  // 只留最近 300 条。上限是 2026-08-18 加的：在这之前台账只在本机长，
+  // 而本机跑得少所以没人碰到边界；把它接到云端（每天 3 篇）之后就是每年 1000 条，
+  // 而 formatTopicHistory 会把**每一条**都拼进选题提示词 —— 不封顶的话
+  // 提示词会一年比一年长，最后自己把自己撑爆。
+  // 300 条≈100 天，比「不与近期重样」实际需要的窗口宽得多。
+  const topics = uniqueRecords([record, ...current]).slice(0, 300);
   await mkdir(path.dirname(file), { recursive: true });
   await writeJson(file, { version: 1, updatedAt: new Date().toISOString(), topics });
   return { record, file, count: topics.length };

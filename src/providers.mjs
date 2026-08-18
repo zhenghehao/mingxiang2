@@ -1,6 +1,11 @@
 import { readMinimaxKey, readTextProviderKey } from "./secrets.mjs";
 import { callCodexCliText } from "./codex-cli.mjs";
 
+/**
+ * @deprecated 2026-08-18 起没有调用方 —— callTextEngine 统一走 callCustomTextProvider。
+ * 这条路不认 key 池、不认 keyIndex、不认 authHeader/authPrefix，
+ * **不要再往它上面接新东西**。留着只为万一有外部脚本还在 import 它。
+ */
 export async function callTextProvider(config, instructions, input) {
   const provider = config.textProvider;
   if (!provider.model) throw new Error("请先填写文本模型名称");
@@ -29,6 +34,36 @@ export async function callTextProvider(config, instructions, input) {
   const text = payload?.choices?.[0]?.message?.content;
   if (!text) throw new Error("文本 API 没有返回内容");
   return text;
+}
+
+/**
+ * 一组可轮换的文本 API Key。
+ *
+ * 为什么要池子：SenseNova 按 key 限流（glm-5.2 / deepseek-v4-flash 每 5 小时 500 次，
+ * sensenova-6.8-flash-lite 1500 次）。单把 key 撞上限之后整条流水线就停在那儿了，
+ * 而这些额度是按 key 算的 —— 多备几把就等于多几倍额度。
+ *
+ * 顺序不重要，能不能**换一把再来**才重要：超时、429、网关 5xx 都属于
+ * 「这一把这会儿不行」，换一把往往立刻就通。
+ */
+export function resolveKeyPool(provider, fallbackKey = "") {
+  const 池 = Array.isArray(provider?.apiKeys) ? provider.apiKeys : [];
+  const 清洗 = 池.map((k) => String(k || "").trim()).filter(Boolean);
+  if (清洗.length) return [...new Set(清洗)];
+  const 单把 = String(provider?.apiKey || fallbackKey || "").trim();
+  return 单把 ? [单把] : [];
+}
+
+/**
+ * 取池子里第 index 把（绕回开头）。
+ *
+ * 起点由调用方给，而且**应该是随机的**：固定从 0 开始的话，第 1 把会先被烧穿
+ * 5 小时配额，后面 99 把一次都用不到 —— 池子等于白备。
+ */
+export function pickKey(pool, index = 0) {
+  if (!pool.length) return "";
+  const i = Number.isFinite(index) ? Math.trunc(index) : 0;
+  return pool[((i % pool.length) + pool.length) % pool.length];
 }
 
 function getByPath(value, dottedPath) {
@@ -62,7 +97,10 @@ export async function callCustomTextProvider(provider, instructions, input, opti
   if (!/^https?:$/.test(parsed.protocol)) throw new Error("接口地址只支持 http 或 https");
 
   const headers = { "Content-Type": "application/json" };
-  const apiKey = String(provider?.apiKey || options.defaultApiKey || "").trim();
+  // 有池子就按 keyIndex 取（上层每重试一次就 +1，等于自动换下一把）；
+  // 没池子时行为和以前完全一样：单把 apiKey，取不到就用 defaultApiKey。
+  const pool = resolveKeyPool(provider, options.defaultApiKey);
+  const apiKey = pool.length ? pickKey(pool, options.keyIndex || 0) : "";
   if (apiKey) {
     // HTTP 头只接受 Latin1（0-255）字符。如果 API Key 里混入了中文、全角符号或
     // 复制粘贴带进来的隐藏字符，fetch 会抛出难懂的 ByteString 错误，这里提前拦截并给出清晰提示。
@@ -144,17 +182,37 @@ export async function callTextEngine(config, provider, instructions, input, opti
   }
   const started = Date.now();
   const environmentKey = process.env[config?.textProvider?.apiKeyEnv || "TEXT_API_KEY"];
-  const keychainKey = environmentKey || provider?.apiKey ? "" : await readTextProviderKey();
-  const text = provider
-    ? await callCustomTextProvider(provider, instructions, input, {
-      ...options,
-      defaultApiKey: environmentKey || keychainKey
-    })
-    : await callTextProvider(config, instructions, input);
+  // 池子优先。有池子时不去读钥匙串 —— 那是一次 security 子进程调用，
+  // 每步每次重试都白跑一遍没有意义。
+  const 池 = resolveKeyPool(provider).length ? provider.apiKeys : (config?.textProvider?.apiKeys || []);
+  const 有池 = resolveKeyPool({ apiKeys: 池 }).length > 0;
+  const keychainKey = (有池 || environmentKey || provider?.apiKey) ? "" : await readTextProviderKey();
+
+  // provider 为空时**也走同一条路**，只是从 config.textProvider 现搭一个。
+  //
+  // 以前这里退回 callTextProvider（另一套请求逻辑）。那条老路不认 key 池、
+  // 不认 keyIndex、不认 authHeader/authPrefix，而它什么时候被走到并不显眼 ——
+  // buildStageProviders 有一条「分步模型和默认模型同名就跳过」的规则，
+  // 于是「选题的模型正好等于默认模型」这种再正常不过的配置，就会让选题这一步
+  // 悄悄绕开池子，拿钥匙串里的旧 key 去打新网关，报一句没头没尾的 Forbidden。
+  // （2026-08-18 实测踩到。）两条路合成一条，这个坑就不存在了。
+  const base = config?.textProvider || {};
+  const effective = provider || {
+    endpoint: base.baseUrl,
+    model: base.model,
+    temperature: base.temperature,
+    authHeader: base.authHeader,
+    authPrefix: base.authPrefix,
+    responsePath: base.responsePath
+  };
+  const text = await callCustomTextProvider({ apiKeys: 池, ...effective }, instructions, input, {
+    ...options,
+    defaultApiKey: environmentKey || keychainKey
+  });
   return {
     text,
     engine: "api",
-    model: provider?.model || config?.textProvider?.model || "",
+    model: effective.model || "",
     reasoningEffort: "",
     elapsedMs: Date.now() - started,
     path: "",

@@ -380,7 +380,7 @@ async function fillDetail(host, run) {
       const del = document.createElement("button");
       del.className = "art-del";
       del.textContent = "删除";
-      del.title = "从 GitHub 删掉这个成品，腾出存储配额";
+      del.title = "删掉这个成品，并把这条记录一起从列表里去掉";
       // 两段式确认，不用 confirm()：原生对话框在内嵌 webview 里会被宿主掐掉，
       // 返回 false 给页面，表现成「点了删除毫无反应」，而且不报任何错。
       let 待确认 = false;
@@ -390,7 +390,7 @@ async function fillDetail(host, run) {
         clearTimeout(定时器);
         del.textContent = "删除";
         del.classList.remove("armed");
-        del.title = "从 GitHub 删掉这个成品，腾出存储配额";
+        del.title = "删掉这个成品，并把这条记录一起从列表里去掉";
       };
       del.onclick = async (e) => {
         e.stopPropagation();
@@ -408,10 +408,19 @@ async function fillDetail(host, run) {
         del.disabled = true;
         del.textContent = "删除中…";
         try {
-          const r = await fetch("/api/artifact?id=" + a.id, { method: "DELETE" });
+          // 带上 run：成品删完顺手把这条运行记录也删了。只删附件的话，
+          // 列表里会留一条点开什么都没有的空壳，「下载一条删一条」就不成立了。
+          const r = await fetch("/api/artifact?id=" + a.id + "&run=" + run.id, { method: "DELETE" });
           const body = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(body.error || ("HTTP " + r.status));
-          wrap.remove();
+          if (body.runDeleted) {
+            // 整条记录没了，重画列表。openRun 还指着它的话详情区会去拉一条
+            // 已经不存在的 run，白白报一次错。
+            openRun = null;
+            load();
+          } else {
+            wrap.remove();
+          }
         } catch (err) {
           del.disabled = false;
           复位();

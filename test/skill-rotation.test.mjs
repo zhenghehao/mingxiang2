@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pickNextSkill, pickRandomSkill, pickScriptSkill, poolFor, scriptSkillPool } from "../src/skill-rotation.mjs";
+import { pickNextSkill, pickRandomSkill, pickScriptSkill, poolFor, poolForPeriod, scriptSkillPool } from "../src/skill-rotation.mjs";
 
 const 六个 = [
   "sleep-dao-chan", "sleep-gushiwen", "sleep-tonghua",
@@ -151,14 +151,32 @@ test("六册各自的引导语必须守住该册的首句硬规则", async () =>
   const phrases = JSON.parse(await readFile(new URL("../data/phrases.json", import.meta.url), "utf8"));
   const 无你 = (s) => !s.includes("你");
   const 规则 = {
-    "sleep-hypnosis-gushiwen": [(s) => s.length <= 10 && 无你(s), "古诗原句：短句、无第二人称"],
     "sleep-hypnosis-tonghua": [(s) => 无你(s) && /很久|从前|那年|多年前|那(个|年)/.test(s), "时间滑门、前两句无「你」"],
     "sleep-hypnosis-dongman": [无你, "纯声音、三句内无「你」"],
     "sleep-hypnosis-ziran": [无你, "客观陈述、不出现「你」"]
   };
   for (const [skill, [ok, why]] of Object.entries(规则)) {
-    const pool = poolFor(phrases.opening, skill);
-    assert.ok(pool.length >= 4, `${skill} 句池太小，轮不开`);
-    for (const s of pool) assert.ok(ok(s), `${skill} 违反「${why}」：${s}`);
+    for (const period of ["晚上", "中午"]) {
+      const pool = poolForPeriod(phrases, "opening", skill, period);
+      assert.ok(pool.length >= 4, `${skill}（${period}）句池太小，轮不开`);
+      for (const s of pool) assert.ok(ok(s), `${skill}（${period}）违反「${why}」：${s}`);
+    }
+  }
+});
+
+test("自选首句的册，取池必须是空的，绝不能回落到 default", async () => {
+  // 古诗册的首句改由 skill 按本篇选题挑之后，句池被删掉了。
+  // 底层的 poolFor 遇到取不到的册会**回落 default**——那是一句「夜深了。外面的声音，
+  // 一点一点退远。」，直接违反 B 册「第一句必须是原句本身」的硬规则。
+  // 生产路径走 poolForPeriod，它先认自选首句名单再取池；这条测试钉死这个差别。
+  const { readFile } = await import("node:fs/promises");
+  const phrases = JSON.parse(await readFile(new URL("../data/phrases.json", import.meta.url), "utf8"));
+  for (const skill of phrases.自选首句) {
+    for (const period of ["晚上", "中午"]) {
+      assert.deepEqual(poolForPeriod(phrases, "opening", skill, period), [],
+        `${skill}（${period}）应该拿到空池`);
+    }
+    // 反证：低层 poolFor 确实会回落到 default —— 说明这个空池不是碰巧
+    assert.deepEqual(poolFor(phrases.opening, skill), phrases.opening.default);
   }
 });
