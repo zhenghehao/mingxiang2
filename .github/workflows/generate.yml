@@ -51,8 +51,11 @@ jobs:
     # 手动触发永远放行；定时触发只在 AUTO_RUN=on 时才跑。
     # 关掉时这个 job 直接跳过，不占 runner、不消耗任何额度。
     if: github.event_name == 'workflow_dispatch' || vars.AUTO_RUN == 'on'
-    # 整条流水线实测约 10 分钟；给足余量，卡住时也不会白占 6 小时
-    timeout-minutes: 90
+    # 2026-08-18 从 90 提到 120：改 1080 之后三处都变慢 ——
+    # 出图 2K（12s→37s/张）、出视频 1080、导出 crf 23 + fps 30。
+    # 再叠上队列满时的退避（最多约 4 分钟）和 20 分钟的轮询预算，90 分钟不够用。
+    # runner 的硬上限是 6 小时，120 仍然远在安全线内。
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4

@@ -165,6 +165,13 @@ function settings(config = {}) {
     directorUrl: String(merged.directorUrl || "").replace(/\/$/, ""),
     directorKeys: clean(merged.directorKeys).length ? clean(merged.directorKeys) : clean(merged.scorerKeys),
     coverPath: resolveCoverPath(merged.coverPath),
+    // 生成分辨率默认跟着**成品导出分辨率**（media.width/height）走，
+    // 而不是各写各的。两个数一旦分家就会出现「生成 720、导出 1080」这种
+    // 白放大 —— 那正是 2026-08-18 之前的状态：视频那边写死 720x1280，
+    // media 那边写着 1080x1920，中间一步放大不产生任何细节。
+    // 真要让生成和导出不一样（比如故意生成小图省额度），在 agnesHeadless 里显式写。
+    width: Number(merged.width) || Number(config?.media?.width) || 1080,
+    height: Number(merged.height) || Number(config?.media?.height) || 1920,
     candidateCount: Math.max(1, Math.min(12, Number(merged.candidateCount) || DEFAULTS.candidateCount))
   };
 }
@@ -473,7 +480,22 @@ export async function genSingleImage(agnes, prompt, keyIndex, { signal, note } =
         body: JSON.stringify({
           model: agnes.imgModel,
           prompt,
-          size: "1K",
+          // 2026-08-18 从 1K 提到 2K。实测三档（9:16）：
+          //
+          //   size="1K"           12.3s   实际 736x1312
+          //   size="2K"           37.4s   实际 1472x2624
+          //   size="1088x1920"     8.5s   实际 736x1312  ← 显式像素被**静默忽略**
+          //
+          // 两件事因此定下来：
+          // 1. 1K 是 736x1312，**比 1080x1920 还小**。视频改到 1080 之后再用 1K，
+          //    首帧就得放大，而首帧正是循环的接缝处，每转一圈看一次。
+          //    2K（1472x2624）是唯一真正够 1080 用的档。
+          // 2. 这个接口**不认具体像素**：传 "1088x1920" 不报错、不生效，
+          //    安安静静给你一张 1K。别再试了，视频那边认 width/height，图片这边不认。
+          //
+          // 代价是慢 3 倍（12.3s → 37.4s）。N 张是并行出的，摊下来可以接受。
+          // 封面那条链路（cover.mjs）一直用的就是 2K。
+          size: "2K",
           ratio: "9:16",
           n: 1,
           negative_prompt: IMAGE_NEGATIVE
@@ -568,13 +590,32 @@ export async function writeMotionPrompt(config, agnes, imageUrl, { signal, note,
 async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
   let consecutiveErrors = 0;
   let lastError = "";
-  for (let i = 0; i < agnes.videoPollMax; i += 1) {
-    await sleep(agnes.videoPollIntervalMs, signal);
+  // 预算按**时间**算，不按轮询次数算。
+  //
+  // 原来是「循环 videoPollMax 次，每次睡 videoPollIntervalMs」，两个毛病：
+  // 1. 被限流时要退避，而退避一多，同样的次数就代表了完全不同的等待时长 ——
+  //    配置里那个数到底意味着等多久，看不出来。
+  // 2. 2026-08-18 实测撞到：查询本身被 429（video status query rate limit exceeded），
+  //    退避之后次数很快用完，报「轮询超时」，而视频其实还在正常生成。
+  const 预算Ms = agnes.videoPollMax * agnes.videoPollIntervalMs;
+  const 截止 = Date.now() + 预算Ms;
+  let 间隔 = agnes.videoPollIntervalMs;
+  while (Date.now() < 截止) {
+    await sleep(间隔, signal);
     try {
       const response = await fetch(`${agnes.baseUrl}/agnesapi?video_id=${encodeURIComponent(videoId)}`, {
         headers: { Authorization: `Bearer ${pick(agnes.videoKeys, keyIndex)}` },
         signal
       });
+      if (response.status === 429) {
+        // 「问得太频繁」不是故障，是**我们自己**的节奏不对。正确反应是放慢，
+        // 不是重试到第 5 次然后判死。这里把间隔翻倍（封顶 60 秒），
+        // 并且**不计入连续失败** —— 它和「地址错了」是两回事。
+        await response.text().catch(() => "");
+        间隔 = Math.min(60_000, Math.round(间隔 * 1.8));
+        onTick?.(`状态查询被限流，间隔放慢到 ${Math.round(间隔 / 1000)} 秒`);
+        continue;
+      }
       if (!response.ok) {
         lastError = `HTTP ${response.status}：${(await response.text()).slice(0, 120)}`;
         consecutiveErrors += 1;
@@ -584,6 +625,8 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
         continue;
       }
       consecutiveErrors = 0;
+      // 查通了就把间隔收回基准 —— 限流是一阵一阵的，不该一次限流就慢一整轮
+      间隔 = agnes.videoPollIntervalMs;
       const payload = await response.json();
       if (payload.status === "completed") {
         const url = payload.metadata?.url || payload.url || "";
@@ -601,7 +644,7 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
       if (consecutiveErrors >= 5) throw new Error(`视频状态查询连续失败 ${consecutiveErrors} 次：${lastError}`);
     }
   }
-  const waited = Math.round(agnes.videoPollMax * agnes.videoPollIntervalMs / 1000);
+  const waited = Math.round(预算Ms / 1000);
   throw new Error(`视频生成轮询超时（等了 ${waited} 秒）${lastError ? `，最后一次错误：${lastError}` : "，期间状态一直不是 completed"}`);
 }
 
@@ -614,20 +657,39 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
  * 然后每条各等 65 秒。并行出 6 条的方案就是被这一行挡住的。
  */
 export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onTick, keyIndex = 0 } = {}) {
+  // 生成分辨率。以前写死 720x1280，而成品导出是 1080x1920 —— 中间那一步
+  // 「放大 1.5 倍」不产生任何细节，只是把糊的部分摊大。2026-08-18 改成跟着
+  // agnes.width/height 走，默认 1080x1920。
+  //
+  // 实测：请求 1080x1920 时 Agnes 实际返回 **1088x1920**（宽度按 16 对齐）。
+  // 多出来的 8 px 由 ffmpeg 导出那步裁掉，不用在这里凑整。
+  const width = Number(agnes.width) || 1080;
+  const height = Number(agnes.height) || 1920;
   const body = agnes.loopMode !== "free"
     ? {
-      model: agnes.vidModel, prompt: videoPrompt, width: 720, height: 1280,
+      model: agnes.vidModel, prompt: videoPrompt, width, height,
       num_frames: 121, frame_rate: 24, negative_prompt: VIDEO_NEGATIVE,
       extra_body: { mode: "keyframes", image: [imageUrl, imageUrl] }
     }
     : {
-      model: agnes.vidModel, prompt: videoPrompt, image: imageUrl, width: 720, height: 1280,
+      model: agnes.vidModel, prompt: videoPrompt, image: imageUrl, width, height,
       num_frames: 121, frame_rate: 24, negative_prompt: VIDEO_NEGATIVE, extra_body: {}
     };
-  const tries = Math.min(3, agnes.videoKeys.length);
+  // 提交要试几次。原来是 min(3, key数)，思路是「这把不行换下一把」——
+  // 那对 401/额度类失败成立，对**队列满**不成立：
+  //
+  //   2026-08-18 实测，5 条候选并行提交，其中 2 条拿到
+  //   503 {"code":"video_queue_full","message":"video queue is full"}
+  //   换 key 一点用没有 —— 队列是 Agnes 全局的，不是按 key 分的。
+  //   该做的是**等一会儿再来**，而不是把 3 把 key 挨个撞一遍然后放弃。
+  //
+  // 所以次数放宽到 6，并且对 503/queue_full 单独退避（15s → 30s → 45s…）。
+  const tries = Math.max(3, Math.min(6, agnes.videoKeys.length + 3));
   let lastError = "";
   let videoId = "";
   let usedKey = 0;
+  let 队列等待Ms = 15_000;
+  let 队列重试次数 = 0;
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
       const response = await fetchRetry(`${agnes.baseUrl}/v1/videos`, {
@@ -638,7 +700,22 @@ export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onT
         },
         body: JSON.stringify(body)
       }, { retries: 2, signal, onNote: note });
-      if (!response.ok) { lastError = `${response.status}: ${(await response.text()).slice(0, 160)}`; continue; }
+      if (!response.ok) {
+        const 正文 = (await response.text()).slice(0, 200);
+        lastError = `${response.status}: ${正文.slice(0, 160)}`;
+        if (response.status === 503 && /queue_full|queue is full/i.test(正文)) {
+          note?.(`视频队列满，等 ${Math.round(队列等待Ms / 1000)} 秒再提交`);
+          await sleep(队列等待Ms, signal);
+          队列等待Ms = Math.min(90_000, 队列等待Ms + 15_000);
+          // 队列满和 key 无关，下一轮**不要**因此跳到别的 key —— 退回来重试同一把。
+          attempt -= 1;
+          // 但也不能无限退：用 lastError 里累计的次数兜底，见下面的 队列重试次数
+          队列重试次数 += 1;
+          if (队列重试次数 > 5) break;
+          continue;
+        }
+        continue;
+      }
       const payload = await response.json();
       // 提交返回的是 task_id（字段名就叫 id），而轮询要的是 video_id，两者不通用。
       // 响应里没带 video_id 时，用 legacy 的 /v1/videos/{task_id} 换一次。

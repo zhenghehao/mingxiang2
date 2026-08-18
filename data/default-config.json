@@ -75,10 +75,11 @@
     "bgmGainDb": -7,
     "bgmTargetLufs": -17.3,
     "fadeSeconds": 25,
-    "videoQuality": "balanced",
+    "videoQuality": "high",
     "width": 1080,
     "height": 1920,
-    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。2026-08-14：introSeconds 从 10 改成 2、speed 从 0.78 改成 0.8、bgmGainDb 从 -15 改成 -7，三处都是本机试听后定的，云端必须跟上，否则同一套代码两边出的片不是一个味道。bgmGainDb 提了 8dB 是因为这类内容留白极多（随便一处停顿就有近 3 秒），那些时候背景音是唯一在响的东西，按「垫在连续人声下面」的标准（低 15~25dB）去压，说话时刚好，留白处就空了。bgmTargetLufs 是混音前把背景音统一到的基准响度：曲库里 180 首本身响度不齐（实测随手两首差 1.2dB），不归一的话同一个 gain 换首曲子听感就变。-17.3 取自定音量时试听的那首（bgm-075），这样定下来的听感对全库都成立。设成 null 可关掉归一化。"
+    "_混音说明": "bgmGainDb 背景音乐相对人声的增益（dB，负数＝压低）；introSeconds 人声前的纯音乐引子；fadeSeconds 结尾淡出。这三个决定成品的节奏和氛围，和本机保持一致。2026-08-14：introSeconds 从 10 改成 2、speed 从 0.78 改成 0.8、bgmGainDb 从 -15 改成 -7，三处都是本机试听后定的，云端必须跟上，否则同一套代码两边出的片不是一个味道。bgmGainDb 提了 8dB 是因为这类内容留白极多（随便一处停顿就有近 3 秒），那些时候背景音是唯一在响的东西，按「垫在连续人声下面」的标准（低 15~25dB）去压，说话时刚好，留白处就空了。bgmTargetLufs 是混音前把背景音统一到的基准响度：曲库里 180 首本身响度不齐（实测随手两首差 1.2dB），不归一的话同一个 gain 换首曲子听感就变。-17.3 取自定音量时试听的那首（bgm-075），这样定下来的听感对全库都成立。设成 null 可关掉归一化。",
+    "_videoQuality说明": "导出档位，决定成品分辨率。**media.width/height 是死配置，media.mjs 只看这一项。**compact/balanced 都是 720x1280，high 是 1080x1920（fps 30、crf 23、音频 160k）。2026-08-18 从 balanced 改成 high。注意必须和 agnes-headless 那两处一起改才有意义：出图 1K 是 736x1312、出视频原来写死 720x1280，光改这里只是把 720 的源放大到 1080，不产生任何细节。三处现在都是 1080 级。代价：文件明显变大，导出也更慢。"
   },
   "agnes": {
     "enabled": false,
@@ -121,8 +122,9 @@
     "_coverPath说明": "叠在片头做淡出的半透明封面图（前 1 秒全显，1→3 秒淡出）。相对路径按仓库根目录解析，本地和 GitHub runner 因此拿到同一张。留空也走这张；真要不带封面写 \"off\"。",
     "outputDir": "",
     "_outputDir说明": "两段成品的落地目录，留空则用 agnes.projectRoot/output。",
-    "videoPollMax": 90,
-    "videoPollIntervalMs": 3000
+    "videoPollMax": 150,
+    "videoPollIntervalMs": 8000,
+    "_videoPoll说明": "这两个数相乘＝**最多等多久**（150 × 8000ms = 20 分钟），不再是「轮询几次」——被限流时要退避，退避一多，同样的次数就代表完全不同的时长。2026-08-18 从 90×3000ms（4.5 分钟）放宽：那个数是 720p 时代定的，改 1080 之后生成更慢；而且实测 3 秒一次查询会被 429 （video status query rate limit exceeded）——不是生成慢，是问得太频繁。现在遇到 429 会把间隔翻倍（封顶 60 秒）且不计入连续失败，查通了再收回 8 秒。"
   },
   "publishing": {
     "uiEnabled": false,
