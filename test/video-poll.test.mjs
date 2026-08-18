@@ -60,3 +60,25 @@ test("轮询预算够 1080 用（至少 15 分钟）", async () => {
   assert.ok(分钟 >= 15, `轮询预算只有 ${分钟} 分钟，1080 生成不够用`);
   assert.ok(a.videoPollIntervalMs >= 6000, "间隔太短会被 429（实测 3 秒就会）");
 });
+
+test("视觉这条路径的每一个 fetch 都有截止时间", () => {
+  // 2026-08-18 云端实测：运动导演那步一条请求挂住，日志里 21 分 34 秒一行都没有，
+  // 占整轮 57 分钟的三分之一。原因是这些 fetch 只传了 signal（管用户取消），
+  // 没传超时——而那套「100 把 key × 2 个尺寸」的重试只在请求**返回之后**才判断，
+  // 请求不返回，重试一次都不会执行。
+  const 每处 = [...src.matchAll(/await fetch\(/g)].map((m) => src.slice(m.index, m.index + 420));
+  assert.ok(每处.length >= 4, "至少有 4 处 fetch");
+  for (const seg of 每处) {
+    assert.match(seg, /withDeadline\(/,
+      `有 fetch 没带截止时间：${seg.slice(0, 110).replace(/\s+/g, " ")}`);
+  }
+});
+
+test("超时算「没接通」要重试，用户取消要立刻退出 —— 两者不能混", () => {
+  const seg = src.slice(src.indexOf("async function fetchRetry"), src.indexOf("async function fetchRetry") + 1400);
+  // 只有 signal.aborted 才是用户取消。超时来自 withDeadline 内部合成的 signal，
+  // 不会回写调用方的那个，所以 aborted 仍是 false —— 正好落进重试分支。
+  assert.match(seg, /if \(signal\?\.aborted\) throw new CancelledError\(\);/);
+  assert.doesNotMatch(seg, /error\?\.name === "AbortError" \|\| signal\?\.aborted/,
+    "旧写法会把超时也当成用户取消，从而不重试");
+});

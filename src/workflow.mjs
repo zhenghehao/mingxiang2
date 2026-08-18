@@ -163,7 +163,11 @@ export function isTransientTextError(error) {
   // 「返回了空内容」也算瞬时：信封是对的，只是模型这次没吐东西。而「没有找到
   // 文本内容」（整个结构不认识）是配置错，不算 —— 两者在 providers.mjs 里已经
   // 分成两句不同的话，正是为了让这里能区别对待。
-  return /超时|timeout|aborted|无法连接|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|network|502|503|504|429|限流|rate limit|返回了空内容/i
+  // terminated / other side closed：Node fetch 在响应流被对端掐断时的原话。
+  // 2026-08-18 云端 #217 就死在这个词上 —— 写稿跑到第 3.3 分钟连接断了，
+  // 而这个词不在清单里，于是「不值得重试」，整轮报废。
+  // 它和 socket hang up 是同一类事：同样的请求再发一次，大概率就过了。
+  return /超时|timeout|aborted|无法连接|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|network|terminated|other side closed|502|503|504|429|限流|rate limit|返回了空内容/i
     .test(message);
 }
 

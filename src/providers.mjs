@@ -139,7 +139,19 @@ export async function callCustomTextProvider(provider, instructions, input, opti
     if (error?.name === "TimeoutError") throw new Error("接口请求超时，请检查地址、网络或模型状态");
     throw new Error(`无法连接接口：${error.message}`);
   }
-  const raw = await response.text();
+  // 读响应体也要包起来。
+  //
+  // 以前只包了 fetch 本身，读 body 裸奔在外面。而长回复的连接**恰恰容易在读到
+  // 一半时断**：2026-08-18 云端 #217 跑到写稿第 3.3 分钟时抛了一个光秃秃的
+  // "terminated"（Node fetch 在响应流被掐断时的原话），没有被包成「无法连接接口」，
+  // 于是上层的 isTransientTextError 认不出来、不重试，整轮生成就此报废。
+  // 写稿这一步动辄跑几分钟，中途断线是常态，本该重试一次就过去了。
+  let raw;
+  try {
+    raw = await response.text();
+  } catch (error) {
+    throw new Error(`无法连接接口：读取响应中断（${error.message}）`);
+  }
   let payload;
   try {
     payload = raw ? JSON.parse(raw) : {};

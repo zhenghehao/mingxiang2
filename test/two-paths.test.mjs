@@ -34,3 +34,43 @@ test("整跑和续跑用的是同一个导出函数，不是各写一份", () =>
   const 次数 = (src.match(/renderVideoVariants\(/g) || []).length;
   assert.ok(次数 >= 3, `renderVideoVariants 应当被定义一次、调用两次（实际出现 ${次数} 次）`);
 });
+
+// ── 断线要能重试 ────────────────────────────────────────────────
+import { isTransientTextError } from "../src/workflow.mjs";
+
+test("连接类失败一律判为可重试，包括读响应体时断掉的", () => {
+  // 2026-08-18 云端 #217：写稿跑到第 3.3 分钟抛了一个光秃秃的 "terminated"
+  //（Node fetch 在响应流被对端掐断时的原话）。它不在清单里 → 不重试 → 整轮报废。
+  // 写稿动辄几分钟，中途断线是常态，不该让一次抖动毁掉一整轮。
+  for (const m of [
+    "terminated",
+    "无法连接接口：读取响应中断（terminated）",
+    "TypeError: terminated",
+    "other side closed",
+    "socket hang up",
+    "fetch failed",
+    "接口请求超时，请检查地址、网络或模型状态"
+  ]) {
+    assert.ok(isTransientTextError(new Error(m)), `「${m}」应当重试`);
+  }
+});
+
+test("配置类错误仍然不重试 —— 重发一万次也是同样的错", () => {
+  for (const m of [
+    "接口请求失败（401）：invalid api key",
+    "请填写模型名称",
+    "接口已响应，但没有找到文本内容；可在高级设置中填写响应路径",
+    "接口地址格式不正确"
+  ]) {
+    assert.equal(isTransientTextError(new Error(m)), false, `「${m}」不该重试`);
+  }
+});
+
+test("读响应体被包在 try 里 —— 裸奔的异常上层认不出来", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const p = await readFile(new URL("../src/providers.mjs", import.meta.url), "utf8");
+  const seg = p.slice(p.indexOf("callCustomTextProvider"), p.indexOf("const configured"));
+  assert.doesNotMatch(seg, /\n  const raw = await response\.text\(\);/,
+    "response.text() 不能裸奔在 try 外面");
+  assert.match(seg, /try \{\s*raw = await response\.text\(\);/);
+});

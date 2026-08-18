@@ -205,15 +205,36 @@ const pick = (keys, index) => keys[((index % keys.length) + keys.length) % keys.
  * 429 是「每分钟 N 次」这类硬限流，秒级指数退避等不过窗口，
  * 所以按 Retry-After，没有就固定等 65 秒跨过下一个整分钟。
  */
-async function fetchRetry(url, options, { retries = 4, baseDelay = 3000, signal, onNote } = {}) {
+/**
+ * 把「调用方的取消信号」和「一个截止时间」合成一个 signal。
+ *
+ * 这里所有的 fetch 原来只传 signal —— 那只管**用户点取消**，不管**对端不回话**。
+ * 后果 2026-08-18 云端实测撞到：运动导演那一步 5 条并行，其中一条请求挂住，
+ * 日志里 21 分 34 秒**一行都没有** —— 没有重试、没有报错、没有任何输出，
+ * 因为那套「100 把 key × 2 个尺寸」的重试只在请求**返回之后**才判断。
+ * 而 Promise.all 要等最慢的那条，于是整轮多花了 21.6 分钟（占总时长三分之一）。
+ *
+ * 文本那条路径（providers.mjs）一直是有 AbortSignal.timeout 的，视觉这条没有。
+ * 又一处「同一件事两套实现，只有一套是对的」。
+ */
+function withDeadline(signal, ms) {
+  const 到点 = AbortSignal.timeout(ms);
+  return signal ? AbortSignal.any([signal, 到点]) : 到点;
+}
+
+async function fetchRetry(url, options, { retries = 4, baseDelay = 3000, signal, onNote, timeoutMs = 240_000 } = {}) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     if (signal?.aborted) throw new CancelledError();
     let response;
     try {
-      response = await fetch(url, { ...options, signal });
+      response = await fetch(url, { ...options, signal: withDeadline(signal, timeoutMs) });
     } catch (error) {
-      if (error?.name === "AbortError" || signal?.aborted) throw new CancelledError();
+      // 用户取消 → 立刻退出；到点超时 → 属于「这次没接通」，该走重试。
+      // 两者都表现为 abort，用 signal.aborted 区分：只有用户取消会让它为 true
+      //（超时来自 withDeadline 内部合成的那个 signal，不会回写调用方的）。
+      if (signal?.aborted) throw new CancelledError();
       if (attempt === retries) throw error;
+      onNote?.(`请求未在 ${Math.round(timeoutMs / 1000)} 秒内返回或失败（${error?.name || "错误"}），重试中`);
       await sleep(Math.round(baseDelay * 1.6 ** attempt), signal);
       continue;
     }
@@ -286,8 +307,10 @@ function runFfmpeg(bin, args, signal) {
   });
 }
 
-async function download(url, dest, signal, { expectMedia = false } = {}) {
-  const response = await fetch(url, { signal, redirect: "follow" });
+async function download(url, dest, signal, { expectMedia = false, timeoutMs = 300_000 } = {}) {
+  // 下的是 2K 图（约 6MB）或成品视频，给 5 分钟。没有截止时间的话，
+  // 对端不回话就是无限期干等 —— 见 withDeadline 的注释。
+  const response = await fetch(url, { signal: withDeadline(signal, timeoutMs), redirect: "follow" });
   if (!response.ok) throw new Error(`下载失败 ${response.status}：${url.slice(-60)}`);
   await pipeline(Readable.fromWeb(response.body), createWriteStream(dest));
   if (!expectMedia) return;
@@ -605,7 +628,10 @@ async function pollVideo(agnes, videoId, keyIndex, { signal, onTick }) {
     try {
       const response = await fetch(`${agnes.baseUrl}/agnesapi?video_id=${encodeURIComponent(videoId)}`, {
         headers: { Authorization: `Bearer ${pick(agnes.videoKeys, keyIndex)}` },
-        signal
+        // 状态查询是个小请求，30 秒足够。挂住的话整条循环就停在这儿了，
+        // 而外层那个「等 20 分钟」的预算是按 Date.now() 算的 —— 它会被这一次
+        // 无限期的等待吃掉，然后报一个看不出真因的「轮询超时」。
+        signal: withDeadline(signal, 30_000)
       });
       if (response.status === 429) {
         // 「问得太频繁」不是故障，是**我们自己**的节奏不对。正确反应是放慢，
@@ -724,7 +750,7 @@ export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onT
       if (!videoId && taskId) {
         const lookup = await fetch(`${agnes.baseUrl}/v1/videos/${encodeURIComponent(taskId)}`, {
           headers: { Authorization: `Bearer ${pick(agnes.videoKeys, keyIndex + attempt)}` },
-          signal
+          signal: withDeadline(signal, 30_000)
         });
         if (lookup.ok) videoId = (await lookup.json()).video_id || "";
       }
