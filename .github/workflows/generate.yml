@@ -164,7 +164,13 @@ jobs:
           # 文档：https://wiki.agnes-ai.com/zh-Hans/docs/overview
           AGNES_BASE_URL: https://apihub.agnes-ai.com
           AGNES_TEXT_MODEL: agnes-2.0-flash
-          AGNES_IMAGE_MODEL: agnes-image-2.0-flash
+          # 2026-08-22 从 2.0-flash 换成 2.1-flash。原来配置注释里写着「2.1 会网关
+          # 520（慢到把 Cloudflare 拖超时）」——**那个结论已经过期**。同一批提示词、
+          # 同样 1K/2K × 4:3/16:9 各 8 张实测：2.1 更快（1K 中位 52s→18s、2K 111s→72s）、
+          # 更稳（1K 四张里三张挤在 15–18s）、列亮度跳变更小更窄（2K 档 5.0~5.6，
+          # 2.0 是 5.7~11.3）、出图尺寸完全一致（叠字比例不用调）、八张零失败。
+          # 这一行同时管封面和 9:16 正片画面 —— 两条链路共用 agnes.imgModel。
+          AGNES_IMAGE_MODEL: agnes-image-2.1-flash
           AGNES_OUTPUT_DIR: output/_agnes
         run: |
           # 定时触发时 inputs 全是空的（那些字段只属于 workflow_dispatch），
