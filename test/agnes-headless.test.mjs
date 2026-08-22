@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   agnesHeadlessEnabled,
   extractJSON,
@@ -116,27 +116,62 @@ test("片头封面：留空走仓库自带那张，而不是没有封面", () =>
   // 里 coverPath 留了空串，而空串当时被解释成「不要封面」——漏填和主动关闭
   // 必须区分开，否则丢了片头也没有任何迹象。
   for (const blank of ["", "   ", null, undefined]) {
-    assert.equal(path.basename(resolveCoverPath(blank)), "cover.png");
+    assert.equal(path.basename(resolveCoverPath(blank, "晚上")), "intro-night.png");
+    assert.equal(path.basename(resolveCoverPath(blank, "中午")), "intro-noon.png");
     assert.ok(path.isAbsolute(resolveCoverPath(blank)), "必须解析成绝对路径，否则换工作目录就找不着");
   }
 });
 
-test("片头封面：仓库里真的带着那张图", () => {
+test("片头封面：按时段分图，中午橙金、晚上蓝", () => {
+  const 图 = { 中午: "assets/intro-noon.png", 晚上: "assets/intro-night.png" };
+  assert.equal(path.basename(resolveCoverPath(图, "中午")), "intro-noon.png");
+  assert.equal(path.basename(resolveCoverPath(图, "晚上")), "intro-night.png");
+  // 认不出的时段一律按晚上：猜错只是配色不对，不至于没有片头
+  for (const 怪 of ["", "   ", "傍晚", "noon", null, undefined]) {
+    assert.equal(path.basename(resolveCoverPath(图, 怪)), "intro-night.png", `时段「${怪}」应当落回晚上`);
+  }
+});
+
+test("片头封面：写成一个字符串就是两个时段共用一张", () => {
+  // 老配置就是这么写的，不能因为加了时段字典就读不懂
+  for (const period of ["中午", "晚上", ""]) {
+    assert.equal(path.basename(resolveCoverPath("assets/cover.png", period)), "cover.png");
+  }
+});
+
+test("片头封面：仓库里真的带着那几张图", () => {
   // 默认值指向仓库内的文件，文件本身没跟着提交的话默认值就是个空头支票。
-  // CI 上没有 data/config.json，全靠这张兜底。
-  assert.ok(existsSync(resolveCoverPath("")), "assets/cover.png 必须在仓库里");
+  // CI 上没有 data/config.json，全靠这几张兜底。
+  for (const period of ["中午", "晚上"]) {
+    assert.ok(existsSync(resolveCoverPath("", period)), `${period}的片头图必须在仓库里`);
+  }
+  // 白噪那版还没接进流程，但文件得在 —— 否则等接的时候才发现漏提交
+  assert.ok(existsSync(resolveCoverPath("assets/intro-whitenoise.png")), "白噪版片头图必须在仓库里");
+});
+
+test("片头封面：默认配置里配的就是那两张，且真的分了时段", () => {
+  // 钉死仓库发出去的默认值。CI 和新克隆跑的就是它 —— 少一个键就等于那个时段
+  // 悄悄落回另一版的配色，成片看着正常，只是中午叠了晚上的图。
+  const dflt = JSON.parse(readFileSync(new URL("../data/default-config.json", import.meta.url), "utf8"));
+  const 配 = dflt.agnesHeadless.coverPath;
+  assert.equal(配.中午, "assets/intro-noon.png");
+  assert.equal(配.晚上, "assets/intro-night.png");
+  assert.notEqual(resolveCoverPath(配, "中午"), resolveCoverPath(配, "晚上"), "两个时段不能解析成同一张");
 });
 
 test("片头封面：相对路径按仓库根解析，绝对路径原样用", () => {
-  const rel = resolveCoverPath("assets/cover.png");
-  assert.equal(resolveCoverPath(""), rel, "默认值和显式写同一个相对路径应当等价");
+  assert.equal(resolveCoverPath("", "晚上"), resolveCoverPath("assets/intro-night.png"),
+    "默认值和显式写同一个相对路径应当等价");
   assert.equal(resolveCoverPath("/tmp/别的封面.png"), "/tmp/别的封面.png");
 });
 
 test("片头封面：只有显式 off 才真的不要封面", () => {
   for (const off of ["off", "OFF", "none", "false", "no"]) {
     assert.equal(resolveCoverPath(off), "");
+    assert.equal(resolveCoverPath(off, "中午"), "", "时段不该让 off 失效");
   }
+  // 只关掉一个时段也得认
+  assert.equal(resolveCoverPath({ 中午: "off", 晚上: "assets/intro-night.png" }, "中午"), "");
 });
 
 test("不分池时待命池为空，生图退回在主池里轮换", () => {

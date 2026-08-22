@@ -324,7 +324,7 @@ async function obtainVoice(config, optimizedText, runDir, audioDir, { progress, 
   return { speech, voicePath, savedVoicePath };
 }
 
-function startAgnesVisualTask(config, text, title, progress, signal) {
+function startAgnesVisualTask(config, text, title, progress, signal, period) {
   // headless 版优先。它和浏览器版产出同样的结构，区别只在于不需要有人
   // 开着 agnes-playground 页面 —— 页面一关任务就没人认领的问题从根上消失。
   // 想退回浏览器版，把 config.agnesHeadless.enabled 改回 false 即可。
@@ -341,6 +341,8 @@ function startAgnesVisualTask(config, text, title, progress, signal) {
     article: text.script,
     title,
     signal,
+    // 片头封面按时段分图（中午橙金 / 晚上蓝）。浏览器版不认这个字段，多传无害。
+    period,
     onProgress: (event) => {
       const visualProgress = Math.round(59 + Math.min(100, Number(event.progress || 0)) * 0.22);
       progress?.({
@@ -569,6 +571,17 @@ export function resolveEndingRule(period, noonWake = false) {
   return 不唤醒 + "这是**中午**的稿子：全文不得出现「晚安」「好梦」「今夜」「一整夜」「天亮」这类夜间词，收尾说的是睡一会儿，不是睡一整晚。";
 }
 
+/**
+ * 从选题简述里认时段。
+ *
+ * 写稿（结尾铁律、开场/落款句池）和片头封面配色都按它分叉，两处必须用同一套
+ * 规则 —— 各判各的迟早出现「稿子是午休、片头叠着晚安」这种自相矛盾的成品。
+ * 认不出来一律算晚上：这个频道绝大多数片子是睡前的。
+ */
+export function resolvePeriod(brief) {
+  return /中午|午休|午间/.test(String(brief || "")) ? "中午" : "晚上";
+}
+
 export async function runTextWorkflow(config, input, { onProgress, onPartial, topicHistory = [], skillHistory = [], phrases = {}, phraseHistory = {}, stages = null, reuse = null } = {}) {
   const want = (stage) => !stages || stages.includes(stage);
   const { brief, date } = input;
@@ -576,7 +589,7 @@ export async function runTextWorkflow(config, input, { onProgress, onPartial, to
   // 哪一步就单独走那个；没写的沿用 textProvider.model。
   // input.providers 优先级最高，留给以后在界面上临时覆盖。
   const providers = { ...buildStageProviders(config), ...(input.providers || {}) };
-  const period = /中午|午休|午间/.test(String(brief || "")) ? "中午" : "晚上";
+  const period = resolvePeriod(brief);
   const engineMode = String(input?.textEngine?.mode || config?.textEngine?.mode || "api");
   // 写稿槽位可以配成一串 Skill，每次从里面挑一个 —— 六个文体轮着来，
   // 频道才不会听起来永远是同一篇。配成单个字符串时池子只有一个元素，行为不变。
@@ -1283,7 +1296,7 @@ export async function runAll(config, input, workspaceRoot, { onProgress, resumeT
   // 换 BGM / 换人声只需要重导视频，不需要让 Agnes 再跑 40 分钟。
   ensureLive();
   const agnesTask = redo("visuals")
-    ? startAgnesVisualTask(config, text, selectedTopic?.title || base, progress, signal)
+    ? startAgnesVisualTask(config, text, selectedTopic?.title || base, progress, signal, resolvePeriod(input.brief))
     : null;
 
   // 封面丢到后台跑，到组装清单前才收。它只在 B 站发布时才需要，

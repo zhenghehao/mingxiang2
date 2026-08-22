@@ -65,9 +65,13 @@ const DEFAULTS = {
   videoPollIntervalMs: 3000,
   // 片头那张半透明封面。原来写死在 cors-proxy.js 旁边（ROOT/cover.png），改成
   // headless 后一度变成必须手填的配置项，结果 default-config 留空、data/config.json
-  // 又不进仓库 —— 云端跑出来的片子就悄悄没了封面。现在默认指向仓库自带的这张，
+  // 又不进仓库 —— 云端跑出来的片子就悄悄没了封面。现在默认指向仓库自带的这几张，
   // 本地和 runner 拿到的是同一个文件。
-  coverPath: "assets/cover.png"
+  //
+  // 2026-08-22 起按时段分图：中午用橙金那版、晚上用蓝版。写成一个字符串也照旧
+  // 支持（两个时段共用一张）。白噪那版已经进仓库但**没接进来** —— 它要等
+  // 「白噪」成为一个独立的内容形态之后才有选它的依据，现在没有。
+  coverPath: { 中午: "assets/intro-noon.png", 晚上: "assets/intro-night.png" }
 };
 
 // 仓库根目录：本文件在 <root>/src/ 下。相对路径的 coverPath 按它解析，
@@ -164,7 +168,9 @@ function settings(config = {}) {
     motionKeys: clean(merged.motionKeys),
     directorUrl: String(merged.directorUrl || "").replace(/\/$/, ""),
     directorKeys: clean(merged.directorKeys).length ? clean(merged.directorKeys) : clean(merged.scorerKeys),
-    coverPath: resolveCoverPath(merged.coverPath),
+    // 这里**不解析**，原样留着字符串或时段字典 —— 时段要到 compose() 才知道。
+    // 读它的只有 compose()，它负责调 resolveCoverPath(coverPath, period)。
+    coverPath: merged.coverPath ?? "",
     // 生成分辨率默认跟着**成品导出分辨率**（media.width/height）走，
     // 而不是各写各的。两个数一旦分家就会出现「生成 720、导出 1080」这种
     // 白放大 —— 那正是 2026-08-18 之前的状态：视频那边写死 720x1280，
@@ -179,15 +185,29 @@ function settings(config = {}) {
 /**
  * 片头封面图的路径解析。
  *
+ * raw 有两种写法：
+ *   "assets/x.png"                  两个时段共用一张（老写法，照旧支持）
+ *   { 中午: "...", 晚上: "..." }     按时段分图，取不到就落回 DEFAULTS 里的那张
+ *
  * 留空 = 用仓库自带的那张（不是"不要封面"）。想彻底不要封面，写 "off"。
  * 之所以把空串解释成"用默认"，是因为空串这个值最容易是**漏填**而不是真想关掉，
  * 而漏填的代价是成片悄悄少了片头 —— 云端就这么丢过一次。
+ *
+ * period 认不出来（空串、拼错、老调用方没传）时一律按晚上算：这个频道绝大多数
+ * 片子是睡前的，猜错的代价也只是片头配色不对，不至于没有片头。
  */
-export function resolveCoverPath(raw) {
-  const value = String(raw ?? "").trim();
+export function resolveCoverPath(raw, period = "") {
+  const value = String(按时段取(raw, period) ?? "").trim();
   if (/^(off|none|false|no)$/i.test(value)) return "";
-  if (!value) return path.join(REPO_ROOT, DEFAULTS.coverPath);
+  if (!value) return path.resolve(REPO_ROOT, 按时段取(DEFAULTS.coverPath, period));
   return path.isAbsolute(value) ? value : path.resolve(REPO_ROOT, value);
+}
+
+/** 从「字符串或时段字典」里取出这个时段该用的那一项。 */
+function 按时段取(raw, period) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const 时段 = String(period || "").trim() || "晚上";
+  return raw[时段] ?? raw.晚上 ?? raw.default ?? "";
 }
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
@@ -771,7 +791,7 @@ export async function genVideo(agnes, imageUrl, videoPrompt, { signal, note, onT
  * 合成两段成品：纯循环去音版 + 封面淡出去音版。
  * 逻辑照搬 agnes-playground/cors-proxy.js 的 compose()。
  */
-async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, onNote }) {
+async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, onNote, period = "" }) {
   const ffmpeg = resolveMediaBinary(config.media?.ffmpegPath, "ffmpeg");
   const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const tmpIn = path.join(workDir, `med_in_${id}.mp4`);
@@ -806,13 +826,16 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, on
 
   // 2) 固定封面淡出 + 去音。scale2ref 让封面自动缩放到视频尺寸（不写死分辨率）。
   //    封面前 1 秒完整显示，第 1→3 秒淡出，之后纯视频。
-  const coverPath = agnes.coverPath || "";
+  // 中午的片子叠橙金那版、晚上叠蓝版。period 传不到这里（老调用方、或者
+  // brief 里看不出时段）就按晚上走 —— 见 resolveCoverPath 的说明。
+  const coverPath = resolveCoverPath(agnes.coverPath, period);
   let hasCover = false;
   if (coverPath) {
     hasCover = await stat(coverPath).then(() => true).catch(() => false);
     // 配了路径却找不到文件，只能是配错或文件没跟着走。以前这里悄悄退回纯净版，
     // 成片少了片头也没人知道（云端就这么丢了一整轮）。现在必须吵出来。
     if (!hasCover) onNote?.(`⚠ 片头封面图不存在，本次成片没有封面：${coverPath}`);
+    else onNote?.(`片头封面按时段选用（${period || "晚上"}）：${path.basename(coverPath)}`);
   } else {
     onNote?.("片头封面已按配置关闭（coverPath=off），成片不带封面");
   }
@@ -855,7 +878,7 @@ async function compose(config, agnes, videoUrl, outputDir, { signal, workDir, on
  * workflow.mjs 不用动），candidates 里是全部 N 条，供界面挑选。
  */
 export async function generateAgnesVisualsHeadless(config, {
-  article, title = "", onProgress, signal, pickIndex
+  article, title = "", onProgress, signal, pickIndex, period = ""
 } = {}) {
   const agnes = settings(config);
   const ensureLive = () => { if (signal?.aborted) throw new CancelledError(); };
@@ -989,7 +1012,7 @@ export async function generateAgnesVisualsHeadless(config, {
     report("done", 88, `正在整理 ${withVideo.length} 条候选视频`);
     await Promise.all(withVideo.map(async (item) => {
       try {
-        const composed = await compose(config, agnes, item.videoUrl, outputDir, { signal, workDir, onNote: note });
+        const composed = await compose(config, agnes, item.videoUrl, outputDir, { signal, workDir, onNote: note, period });
         item.loopPath = composed.plainPath;
         item.coverPath = composed.coverPath;
         item.hasCover = composed.hasCover;
