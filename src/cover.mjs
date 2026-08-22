@@ -411,7 +411,7 @@ export async function generateCovers(text, { onProgress, config } = {}) {
   // 出图走 Agnes，写 prompt 那步仍走 SenseNova（deepseek）—— 两批 key 不一样。
   const agnes = {
     baseUrl: String(config?.agnesHeadless?.baseUrl || "https://apihub.agnes-ai.cn").replace(/\/$/, ""),
-    imgModel: config?.agnesHeadless?.imgModel || "agnes-image-2.0-flash",
+    imgModel: config?.agnesHeadless?.imgModel || "agnes-image-2.1-flash",
     apiKeys: [...new Set((config?.agnesHeadless?.apiKeys || [])
       .map((k) => String(k || "").trim()).filter(Boolean))]
   };

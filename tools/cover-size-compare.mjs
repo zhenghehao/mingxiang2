@@ -11,7 +11,7 @@
  * 正常照片相邻列差几级灰阶，有缝的地方会突然跳几十级 —— 这样不用肉眼一张张看。
  *
  * 用法：
- *   AGNES_API_KEYS=k1,k2 node tools/cover-size-test.mjs [每档每比例张数=3] [档位=1K,2K]
+ *   AGNES_API_KEYS=k1,k2 node tools/cover-size-compare.mjs [每档每比例张数=3] [档位=1K,2K]
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -47,8 +47,12 @@ const base = await readJson(path.join(ROOT, "data/default-config.json"), {});
 const user = await readJson(path.join(ROOT, "data/config.json"), {});
 const { config } = applyEnvOverrides(deepMerge(base, user));
 const agnes = config.agnesHeadless;
-const keys = (process.env.AGNES_API_KEYS || "").split(/[,、，;；\s]+/).map((s) => s.trim()).filter(Boolean)
-  .concat(agnes.apiKeys || []);
+// AGNES_API_KEYS 会被 applyEnvOverrides 写进 agnes.apiKeys，所以这两个来源本来就重叠。
+// 不去重的话日志会报「18 把」这种虚数，轮换时也会在同一把上多绕一圈。
+const keys = [...new Set([
+  ...(process.env.AGNES_API_KEYS || "").split(/[,、，;；\s]+/).map((s) => s.trim()).filter(Boolean),
+  ...(agnes.apiKeys || [])
+])];
 if (!keys.length) {
   console.error("没有 AGNES_API_KEYS —— 这个脚本只能在有 key 的地方跑（云端 Secrets 或本机 config.json）");
   process.exit(1);
@@ -58,20 +62,41 @@ console.log(`端点 ${agnes.baseUrl}`);
 console.log(`模型 ${agnes.imgModel}`);
 console.log(`档位 ${档位.join(" / ")} · 每档每比例 ${每档张数} 张 · key ${keys.length} 把\n`);
 
-async function 出图(prompt, size, ratio, attempt) {
-  const key = keys[attempt % keys.length];
-  const r = await fetch(`${agnes.baseUrl}/v1/images/generations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: agnes.imgModel, prompt, size, ratio, n: 1 }),
-    signal: AbortSignal.timeout(180_000)
-  });
-  const p = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${JSON.stringify(p).slice(0, 160)}`);
-  const url = p?.data?.[0]?.url;
-  if (!url) throw new Error(`没拿到图片 URL：${JSON.stringify(p).slice(0, 160)}`);
-  const bin = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  return Buffer.from(await bin.arrayBuffer());
+const 睡 = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 出一张图。失败就换 key 重试，间隔指数退避。
+ *
+ * 网关会抖：实测同一批里出现过 503 ServiceUnavailable 和 180 秒超时，而相邻几张
+ * 都正常。这个脚本的目的是**把每一格都填满**做对照，缺一张就少一个数据点，
+ * 所以宁可慢也要重试。退避是因为撞上限流时立刻重发只会继续撞。
+ */
+async function 出图(prompt, size, ratio, attempt, { 重试 = 4 } = {}) {
+  let 上次错 = "";
+  for (let i = 0; i <= 重试; i += 1) {
+    const key = keys[(attempt + i) % keys.length];
+    try {
+      const r = await fetch(`${agnes.baseUrl}/v1/images/generations`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: agnes.imgModel, prompt, size, ratio, n: 1 }),
+        signal: AbortSignal.timeout(240_000)
+      });
+      const p = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`HTTP ${r.status} ${JSON.stringify(p).slice(0, 140)}`);
+      const url = p?.data?.[0]?.url;
+      if (!url) throw new Error(`没拿到图片 URL：${JSON.stringify(p).slice(0, 140)}`);
+      const bin = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+      return Buffer.from(await bin.arrayBuffer());
+    } catch (e) {
+      上次错 = e.message;
+      if (i === 重试) break;
+      const 等 = Math.min(60, 8 * 2 ** i);
+      process.stdout.write(`  ↻ 第 ${i + 1} 次失败（${e.message.slice(0, 60)}），${等}s 后换 key 重试\n`);
+      await 睡(等 * 1000);
+    }
+  }
+  throw new Error(`重试 ${重试} 次仍失败：${上次错}`);
 }
 
 /** 逐列平均亮度，返回 {宽, 高, 最大跳变, 位置, 前十大跳变} —— 用 Python 算，省得引依赖。 */
@@ -98,7 +123,9 @@ for (const size of 档位) {
   for (const spec of 比例) {
     for (let i = 0; i < 每档张数; i += 1) {
       const prompt = 提示词[i % 提示词.length];
-      const 名 = `${size}-${spec.name}-${i + 1}`;
+      // 模型名要进文件名：同一批提示词换模型跑第二轮时，不带模型名会把第一轮覆盖掉。
+      const 短模型 = agnes.imgModel.replace("agnes-image-", "").replace("-flash", "");
+      const 名 = `${短模型}-${size}-${spec.name}-${i + 1}`;
       const started = Date.now();
       try {
         const buf = await 出图(prompt, size, spec.ratio, n += 1);
@@ -122,10 +149,10 @@ for (const size of 档位) {
 
 console.log("\n════ 汇总（跳变越大越可能有接缝）════");
 for (const size of 档位) {
-  const 组 = 结果.filter((r) => r.名.startsWith(size) && !r.错);
+  const 组 = 结果.filter((r) => r.名.includes(`-${size}-`) && !r.错);
   if (!组.length) { console.log(`${size}: 全部失败`); continue; }
   const 平均 = (组.reduce((a, b) => a + b.跳变, 0) / 组.length).toFixed(1);
   const 最大 = Math.max(...组.map((r) => r.跳变));
-  console.log(`${size}: ${组.length} 张 · 平均跳变 ${平均} · 最大 ${最大} · 尺寸 ${组[0].w}x${组[0].h}`);
+  console.log(`${agnes.imgModel} ${size}: ${组.length} 张 · 平均跳变 ${平均} · 最大 ${最大} · 尺寸 ${组[0].w}x${组[0].h} · 平均 ${(组.reduce((a,b)=>a+ +b.秒,0)/组.length).toFixed(0)}s`);
 }
 console.log(`\n图在 ${OUT}`);
